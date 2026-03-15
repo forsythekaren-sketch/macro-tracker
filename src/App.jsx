@@ -84,21 +84,24 @@ function MacroBar({ label, value, max, color }) {
 }
 
 async function searchFoodAI(query) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      messages: [{
-        role: "user",
-        content: `Return nutrition info for: "${query}". Respond ONLY with valid JSON array (no markdown, no preamble) of 1-4 matching foods. Each object: { "name": string, "serving": string, "calories": number, "protein": number, "carbs": number, "fat": number, "fiber": number, "sugar": number }. Use realistic values per serving.`
-      }]
-    })
-  });
+  const response = await fetch(
+    `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(query)}&search_simple=1&action=process&json=1&page_size=5&fields=product_name,serving_size,nutriments`
+  );
   const data = await response.json();
-  const text = data.content?.find(b => b.type === "text")?.text || "[]";
-  return JSON.parse(text.replace(/```json|```/g, "").trim());
+  const results = (data.products || [])
+    .filter(p => p.product_name && p.nutriments)
+    .map(p => ({
+      name: p.product_name,
+      serving: p.serving_size || "100g",
+      calories: Math.round(p.nutriments["energy-kcal_serving"] || p.nutriments["energy-kcal_100g"] || 0),
+      protein: Math.round(p.nutriments["proteins_serving"] || p.nutriments["proteins_100g"] || 0),
+      carbs: Math.round(p.nutriments["carbohydrates_serving"] || p.nutriments["carbohydrates_100g"] || 0),
+      fat: Math.round(p.nutriments["fat_serving"] || p.nutriments["fat_100g"] || 0),
+      fiber: Math.round(p.nutriments["fiber_serving"] || p.nutriments["fiber_100g"] || 0),
+      sugar: Math.round(p.nutriments["sugars_serving"] || p.nutriments["sugars_100g"] || 0),
+    }))
+    .filter(f => f.calories > 0);
+  return results;
 }
 
 export default function MacroTracker() {
