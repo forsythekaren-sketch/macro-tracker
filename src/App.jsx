@@ -1,13 +1,22 @@
 import { useState, useEffect } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "firebase/firestore";
 
-const STORAGE_KEYS = {
-  customFoods: "macro-tracker-custom-foods",
-  goals: "macro-tracker-goals",
-  logs: "macro-tracker-logs",
-  weights: "macro-tracker-weights",
+const firebaseConfig = {
+  apiKey: "AIzaSyDuq5VnqQ6a2rb7jHsz-Ut9scX-R37g6NU",
+  authDomain: "macro-tracker-7bef2.firebaseapp.com",
+  projectId: "macro-tracker-7bef2",
+  storageBucket: "macro-tracker-7bef2.firebasestorage.app",
+  messagingSenderId: "1008877517002",
+  appId: "1:1008877517002:web:3ecc6ed45e1c0eb8001c33"
 };
 
-const defaultGoals = { calories: 2000, protein: 150, carbs: 200, fat: 65, fiber: 25, sugar: 50 };
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+
+const USER_ID = "karen";
+
+const defaultGoals = { calories: 1650, protein: 100, carbs: 180, fat: 58, fiber: 30, sugar: 25 };
 
 function getDateKey(date = new Date()) {
   return date.toISOString().split("T")[0];
@@ -31,6 +40,19 @@ const MACRO_COLORS = {
 };
 
 const TABS = ["Today", "Week", "Weight", "Foods", "Goals"];
+
+async function saveToFirebase(path, data) {
+  try {
+    await setDoc(doc(db, path), data, { merge: true });
+  } catch (e) { console.error("Firebase save error:", e); }
+}
+
+async function loadFromFirebase(path) {
+  try {
+    const snap = await getDoc(doc(db, path));
+    return snap.exists() ? snap.data() : null;
+  } catch (e) { console.error("Firebase load error:", e); return null; }
+}
 
 function RingProgress({ value, max, color, size = 80, stroke = 7 }) {
   const r = (size - stroke * 2) / 2;
@@ -81,15 +103,33 @@ async function searchFoodAI(query) {
 
 export default function MacroTracker() {
   const [tab, setTab] = useState("Today");
-  const [goals, setGoals] = useState(() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.goals)) || defaultGoals; } catch { return defaultGoals; } });
-  const [logs, setLogs] = useState(() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.logs)) || {}; } catch { return {}; } });
-  const [customFoods, setCustomFoods] = useState(() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.customFoods)) || []; } catch { return []; } });
-  const [weights, setWeights] = useState(() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEYS.weights)) || {}; } catch { return {}; } });
+  const [goals, setGoals] = useState(defaultGoals);
+  const [logs, setLogs] = useState({});
+  const [customFoods, setCustomFoods] = useState([]);
+  const [weights, setWeights] = useState({});
+  const [loaded, setLoaded] = useState(false);
 
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.goals, JSON.stringify(goals)); }, [goals]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.logs, JSON.stringify(logs)); }, [logs]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.customFoods, JSON.stringify(customFoods)); }, [customFoods]);
-  useEffect(() => { localStorage.setItem(STORAGE_KEYS.weights, JSON.stringify(weights)); }, [weights]);
+  useEffect(() => {
+    async function loadAll() {
+      const [g, l, f, w] = await Promise.all([
+        loadFromFirebase(`users/${USER_ID}/settings/goals`),
+        loadFromFirebase(`users/${USER_ID}/data/logs`),
+        loadFromFirebase(`users/${USER_ID}/data/customFoods`),
+        loadFromFirebase(`users/${USER_ID}/data/weights`),
+      ]);
+      if (g) setGoals(g);
+      if (l) setLogs(l);
+      if (f) setCustomFoods(f.list || []);
+      if (w) setWeights(w);
+      setLoaded(true);
+    }
+    loadAll();
+  }, []);
+
+  const saveGoals = (g) => { setGoals(g); saveToFirebase(`users/${USER_ID}/settings/goals`, g); };
+  const saveLogs = (l) => { setLogs(l); saveToFirebase(`users/${USER_ID}/data/logs`, l); };
+  const saveCustomFoods = (f) => { setCustomFoods(f); saveToFirebase(`users/${USER_ID}/data/customFoods`, { list: f }); };
+  const saveWeights = (w) => { setWeights(w); saveToFirebase(`users/${USER_ID}/data/weights`, w); };
 
   const today = getDateKey();
   const todayLog = logs[today] || [];
@@ -107,14 +147,24 @@ export default function MacroTracker() {
   );
 
   const addEntry = (food) => {
-    setLogs(prev => ({ ...prev, [today]: [...(prev[today] || []), { ...food, id: Date.now(), time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }] }));
+    const updated = { ...logs, [today]: [...(logs[today] || []), { ...food, id: Date.now(), time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }] };
+    saveLogs(updated);
   };
-  const removeEntry = (id) => { setLogs(prev => ({ ...prev, [today]: (prev[today] || []).filter(e => e.id !== id) })); };
-  const saveCustomFood = (food) => { setCustomFoods(prev => [...prev, { ...food, id: Date.now() }]); };
-  const deleteCustomFood = (id) => { setCustomFoods(prev => prev.filter(f => f.id !== id)); };
-  const logWeight = (date, value) => { setWeights(prev => ({ ...prev, [date]: value })); };
+  const removeEntry = (id) => {
+    const updated = { ...logs, [today]: (logs[today] || []).filter(e => e.id !== id) };
+    saveLogs(updated);
+  };
+  const addCustomFood = (food) => { saveCustomFoods([...customFoods, { ...food, id: Date.now() }]); };
+  const deleteCustomFood = (id) => { saveCustomFoods(customFoods.filter(f => f.id !== id)); };
+  const logWeight = (date, value) => { saveWeights({ ...weights, [date]: value }); };
 
   const t = totals(todayLog);
+
+  if (!loaded) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: "'DM Sans', sans-serif", color: "#aaa", fontSize: 14 }}>
+      Loading…
+    </div>
+  );
 
   return (
     <div style={{ fontFamily: "'DM Sans', sans-serif", background: "#faf8f5", minHeight: "100vh", maxWidth: 480, margin: "0 auto", paddingBottom: 80 }}>
@@ -135,8 +185,8 @@ export default function MacroTracker() {
         {tab === "Today" && <TodayTab totals={t} goals={goals} entries={todayLog} onAdd={addEntry} onRemove={removeEntry} customFoods={customFoods} />}
         {tab === "Week" && <WeekTab logs={logs} goals={goals} totals={totals} />}
         {tab === "Weight" && <WeightTab weights={weights} onLog={logWeight} />}
-        {tab === "Foods" && <FoodsTab customFoods={customFoods} onSave={saveCustomFood} onDelete={deleteCustomFood} onAdd={addEntry} />}
-        {tab === "Goals" && <GoalsTab goals={goals} onChange={setGoals} />}
+        {tab === "Foods" && <FoodsTab customFoods={customFoods} onSave={addCustomFood} onDelete={deleteCustomFood} onAdd={addEntry} />}
+        {tab === "Goals" && <GoalsTab goals={goals} onChange={saveGoals} />}
       </div>
     </div>
   );
@@ -167,7 +217,7 @@ function TodayTab({ totals, goals, entries, onAdd, onRemove, customFoods }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
         {["protein", "carbs", "fat"].map(m => (
           <div key={m} style={{ background: "#fff", border: "1px solid #ede9e2", borderRadius: 12, padding: "12px 10px", textAlign: "center" }}>
             <div style={{ fontSize: 18, fontWeight: 600, color: MACRO_COLORS[m] }}>{Math.max(0, goals[m] - totals[m])}</div>
@@ -198,7 +248,7 @@ function TodayTab({ totals, goals, entries, onAdd, onRemove, customFoods }) {
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600, fontSize: 14, color: "#1a1a1a" }}>{e.name}</div>
                 <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>{e.serving} · {e.time}</div>
-                <div style={{ fontSize: 11, color: "#bbb", marginTop: 2 }}>
+                <div style={{ fontSize: 11, marginTop: 2 }}>
                   {e.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, marginRight: 6 }}>{e.fiber}g fiber</span>}
                   {e.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar }}>{e.sugar}g sugar</span>}
                 </div>
@@ -375,8 +425,6 @@ function WeightTab({ weights, onLog }) {
   return (
     <div>
       <p style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#aaa", fontWeight: 600, marginBottom: 14 }}>Weight</p>
-
-      {/* Log today */}
       <div style={{ background: "#fff", border: "1px solid #ede9e2", borderRadius: 16, padding: 20, marginBottom: 16 }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a", marginBottom: 12 }}>Log Today's Weight</p>
         <div style={{ display: "flex", gap: 8 }}>
@@ -386,7 +434,6 @@ function WeightTab({ weights, onLog }) {
         </div>
       </div>
 
-      {/* BMI Calculator */}
       <div style={{ background: "#fff", border: "1px solid #ede9e2", borderRadius: 16, padding: 20, marginBottom: 16 }}>
         <p style={{ fontSize: 13, fontWeight: 600, color: "#1a1a1a", marginBottom: 12 }}>BMI Calculator</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
@@ -421,7 +468,6 @@ function WeightTab({ weights, onLog }) {
         {!bmi && <p style={{ fontSize: 13, color: "#aaa", textAlign: "center" }}>Log a weight above to see your BMI</p>}
       </div>
 
-      {/* 7-day log */}
       <p style={{ fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "#aaa", fontWeight: 600, marginBottom: 10 }}>7-Day Log</p>
       {days.slice().reverse().map(d => {
         const w = weights[d];
@@ -516,3 +562,10 @@ function GoalsTab({ goals, onChange }) {
     </div>
   );
 }
+```
+
+Once you've pasted and saved `App.jsx`, run these commands in Terminal to push the update to GitHub and Vercel will auto-deploy it:
+```
+git add .
+git commit -m "add firebase sync"
+git push
