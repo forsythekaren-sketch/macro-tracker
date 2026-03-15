@@ -562,10 +562,4 @@ function GoalsTab({ goals, onChange }) {
     </div>
   );
 }
-```
 
-Once you've pasted and saved `App.jsx`, run these commands in Terminal to push the update to GitHub and Vercel will auto-deploy it:
-```
-git add .
-git commit -m "add firebase sync"
-git push
