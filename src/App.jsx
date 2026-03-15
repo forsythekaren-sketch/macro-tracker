@@ -345,22 +345,41 @@ function FoodResultRow({ food, onAdd }) {
 function ManualFoodForm({ onAdd, onSave }) {
   const empty = { name: "", serving: "1 serving", calories: "", protein: "", carbs: "", fat: "", fiber: "", sugar: "" };
   const [form, setForm] = useState(empty);
+  const [oz, setOz] = useState("");
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const valid = form.name && form.calories && form.protein && form.carbs && form.fat;
+
+  const convertOz = () => {
+    if (!oz) return;
+    const grams = Math.round(parseFloat(oz) * 28.3495);
+    set("serving", `${oz}oz (${grams}g)`);
+  };
 
   const handleSubmit = (action) => {
     if (!valid) return;
     const food = { ...form, calories: +form.calories, protein: +form.protein, carbs: +form.carbs, fat: +form.fat, fiber: +(form.fiber || 0), sugar: +(form.sugar || 0) };
-    if (action === "add" && onAdd) { onAdd(food); setForm(empty); }
-    if (action === "save" && onSave) { onSave(food); setForm(empty); }
+    if (action === "add" && onAdd) { onAdd(food); setForm(empty); setOz(""); }
+    if (action === "save" && onSave) { onSave(food); setForm(empty); setOz(""); }
   };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <input value={form.name} onChange={e => set("name", e.target.value)} placeholder="Food name*"
         style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#faf8f5" }} />
-      <input value={form.serving} onChange={e => set("serving", e.target.value)} placeholder="Serving size"
-        style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#faf8f5" }} />
+      
+      {/* Serving size with oz converter */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input value={form.serving} onChange={e => set("serving", e.target.value)} placeholder="Serving size"
+          style={{ flex: 2, padding: "10px 12px", borderRadius: 10, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#faf8f5" }} />
+        <input value={oz} onChange={e => setOz(e.target.value)} placeholder="oz" type="number"
+          style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#faf8f5" }} />
+        <button onClick={convertOz}
+          style={{ padding: "10px 12px", borderRadius: 10, background: "#f5f2ee", color: "#1a1a1a", fontSize: 12, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+          → g
+        </button>
+      </div>
+      <p style={{ fontSize: 11, color: "#aaa", marginTop: -6 }}>Enter oz and tap → g to convert serving size</p>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
         {[["calories","Calories*"],["protein","Protein (g)*"],["carbs","Carbs (g)*"],["fat","Fat (g)*"],["fiber","Fiber (g)"],["sugar","Sugar (g)"]].map(([k, label]) => (
           <input key={k} value={form[k]} onChange={e => set(k, e.target.value)} placeholder={label} type="number"
