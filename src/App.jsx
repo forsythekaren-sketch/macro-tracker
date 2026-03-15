@@ -325,19 +325,48 @@ function AddFoodPanel({ onAdd, customFoods }) {
 }
 
 function FoodResultRow({ food, onAdd }) {
+  const [qty, setQty] = useState(1);
+  const [unit, setUnit] = useState("serving");
+
+  const multiplier = unit === "oz"
+    ? (parseFloat(qty) * 28.3495) / 100
+    : unit === "g"
+    ? parseFloat(qty) / 100
+    : parseFloat(qty) || 1;
+
+  const scaled = {
+    ...food,
+    serving: unit === "serving" ? `${qty} serving` : `${qty}${unit}`,
+    calories: Math.round(food.calories * multiplier),
+    protein: Math.round(food.protein * multiplier),
+    carbs: Math.round(food.carbs * multiplier),
+    fat: Math.round(food.fat * multiplier),
+    fiber: Math.round(food.fiber * multiplier),
+    sugar: Math.round(food.sugar * multiplier),
+  };
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #f5f2ee" }}>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, color: "#1a1a1a" }}>{food.name}</div>
-        <div style={{ fontSize: 11, color: "#aaa" }}>{food.serving} · {food.calories} kcal · {food.protein}P {food.carbs}C {food.fat}F</div>
-        {(food.fiber > 0 || food.sugar > 0) && (
-          <div style={{ fontSize: 11, marginTop: 1 }}>
-            {food.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, marginRight: 6 }}>{food.fiber}g fiber</span>}
-            {food.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar }}>{food.sugar}g sugar</span>}
-          </div>
-        )}
+    <div style={{ padding: "10px 0", borderBottom: "1px solid #f5f2ee" }}>
+      <div style={{ fontWeight: 600, fontSize: 14, color: "#1a1a1a", marginBottom: 4 }}>{food.name}</div>
+      <div style={{ fontSize: 11, color: "#aaa", marginBottom: 8 }}>
+        {scaled.serving} · {scaled.calories} kcal · {scaled.protein}P {scaled.carbs}C {scaled.fat}F
+        {scaled.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, marginLeft: 6 }}>{scaled.fiber}g fiber</span>}
+        {scaled.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar, marginLeft: 6 }}>{scaled.sugar}g sugar</span>}
       </div>
-      <button onClick={() => onAdd(food)} style={{ padding: "6px 14px", borderRadius: 8, background: "#1a1a1a", color: "#fff", fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>Add</button>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <input value={qty} onChange={e => setQty(e.target.value)} type="number" min="0.1" step="0.1"
+          style={{ width: 60, padding: "6px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#faf8f5" }} />
+        <select value={unit} onChange={e => setUnit(e.target.value)}
+          style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#faf8f5" }}>
+          <option value="serving">serving</option>
+          <option value="oz">oz</option>
+          <option value="g">g</option>
+        </select>
+        <button onClick={() => onAdd(scaled)}
+          style={{ flex: 1, padding: "6px 14px", borderRadius: 8, background: "#1a1a1a", color: "#fff", fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>
+          Add
+        </button>
+      </div>
     </div>
   );
 }
