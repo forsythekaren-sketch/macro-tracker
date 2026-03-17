@@ -293,7 +293,7 @@ async function lookupBarcode(barcode) {
   };
 }
 
-function BarcodeScanner({ onResult }) {
+function BarcodeScanner({ onResult, onScanAgain }) {
   const videoRef = React.useRef(null);
   const streamRef = React.useRef(null);
   const readerRef = React.useRef(null);
@@ -389,7 +389,7 @@ function BarcodeScanner({ onResult }) {
         </div>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => { setScannedFood(null); setStatus("scanning"); }}
+        <button onClick={onScanAgain}
           style={{ flex: 1, padding: 11, borderRadius: 10, background: "#f5f2ee", color: "#1a1a1a", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
           Scan Again
         </button>
@@ -422,6 +422,7 @@ function AddFoodPanel({ onAdd, customFoods }) {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [scanKey, setScanKey] = useState(0);
 
   const doSearch = async () => {
     if (!query.trim()) return;
@@ -454,7 +455,7 @@ function AddFoodPanel({ onAdd, customFoods }) {
           {results.map((f, i) => <FoodResultRow key={i} food={f} onAdd={onAdd} />)}
         </div>
       )}
-      {mode === "scan" && <BarcodeScanner onResult={(food) => { onAdd(food); }} />}
+      {mode === "scan" && <BarcodeScanner key={scanKey} onResult={(food) => { onAdd(food); }} onScanAgain={() => setScanKey(k => k + 1)} />}
       {mode === "custom" && (
         <div>
           {customFoods.length === 0
@@ -759,4 +760,3 @@ function GoalsTab({ goals, onChange }) {
     </div>
   );
 }
-
