@@ -305,36 +305,66 @@ function BarcodeScanner({ onResult }) {
     let cancelled = false;
     async function startScanner() {
       try {
-        const { BrowserMultiFormatReader } = await import("https://esm.sh/@zxing/browser@0.1.5");
+        const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
         if (cancelled) return;
-        const reader = new BrowserMultiFormatReader();
+
+        const hints = new Map();
+        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8,
+          BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
+          BarcodeFormat.CODE_128, BarcodeFormat.CODE_39,
+        ]);
+        hints.set(DecodeHintType.TRY_HARDER, true);
+
+        const reader = new BrowserMultiFormatReader(hints);
         readerRef.current = reader;
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+        });
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
-        if (videoRef.current) videoRef.current.srcObject = stream;
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
         setStatus("scanning");
-        reader.decodeFromStream(stream, videoRef.current, async (result, err) => {
-          if (cancelled) return;
-          if (result) {
-            setStatus("found");
-            try {
-              const food = await lookupBarcode(result.getText());
-              if (!cancelled) setScannedFood(food);
-            } catch {
-              setStatus("error");
-              setErrorMsg("Product not found in database. Try searching manually.");
+
+        const decode = () => {
+          if (cancelled || !videoRef.current) return;
+          try {
+            const result = reader.decodeFromVideoElement(videoRef.current);
+            if (result) {
+              handleResult(result.getText());
+              return;
             }
-          }
-        });
+          } catch {}
+          requestAnimationFrame(decode);
+        };
+        requestAnimationFrame(decode);
+
       } catch (e) {
         if (!cancelled) { setStatus("error"); setErrorMsg("Camera access denied. Please allow camera permissions."); }
       }
     }
+
+    async function handleResult(barcode) {
+      setStatus("found");
+      try {
+        const food = await lookupBarcode(barcode);
+        if (!cancelled) setScannedFood(food);
+      } catch {
+        setStatus("error");
+        setErrorMsg("Product not found in database. Try searching manually.");
+      }
+    }
+
     startScanner();
     return () => {
       cancelled = true;
       streamRef.current?.getTracks().forEach(t => t.stop());
+      if (readerRef.current?.reset) readerRef.current.reset();
     };
   }, []);
 
