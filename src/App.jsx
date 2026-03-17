@@ -297,111 +297,92 @@ function BarcodeScanner({ onResult, onScanAgain }) {
   const videoRef = React.useRef(null);
   const canvasRef = React.useRef(null);
   const streamRef = React.useRef(null);
-  const rafRef = React.useRef(null);
+  const timerRef = React.useRef(null);
+  const activeRef = React.useRef(true);
   const [status, setStatus] = useState("starting");
   const [errorMsg, setErrorMsg] = useState("");
   const [scannedFood, setScannedFood] = useState(null);
 
   useEffect(() => {
-    let cancelled = false;
+    activeRef.current = true;
 
-    async function startScanner() {
+    async function start() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } }
+          video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
         });
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        if (!activeRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
 
         const video = videoRef.current;
         if (!video) return;
-        video.srcObject = stream;
-        video.playsInline = true;
-        video.muted = true;
+
+        await new Promise(resolve => {
+          video.onloadedmetadata = resolve;
+          video.srcObject = stream;
+        });
         await video.play();
 
-        // Wait for video to have real dimensions
-        await new Promise(resolve => {
-          const check = () => {
-            if (video.videoWidth > 0) resolve();
-            else setTimeout(check, 100);
-          };
-          check();
-        });
-
-        if (cancelled) return;
+        // Extra wait for iOS to fully initialize
+        await new Promise(r => setTimeout(r, 800));
+        if (!activeRef.current) return;
         setStatus("scanning");
+        scheduleScan();
 
-        // Draw video frames to canvas and detect from canvas
-        // This is more reliable on iOS than detecting directly from video element
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-
-        if ("BarcodeDetector" in window) {
-          const detector = new window.BarcodeDetector({
-            formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
-          });
-          const scan = async () => {
-            if (cancelled) return;
-            try {
-              canvas.width = video.videoWidth;
-              canvas.height = video.videoHeight;
-              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-              const barcodes = await detector.detect(canvas);
-              if (barcodes.length > 0) {
-                await handleResult(barcodes[0].rawValue);
-                return;
-              }
-            } catch {}
-            if (!cancelled) rafRef.current = setTimeout(scan, 400);
-          };
-          scan();
-        } else {
-          // Fallback: zxing on canvas
-          const { BrowserMultiFormatReader, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
-          if (cancelled) return;
-          const hints = new Map();
-          hints.set(DecodeHintType.TRY_HARDER, true);
-          const reader = new BrowserMultiFormatReader(hints);
-          const scan = () => {
-            if (cancelled) return;
-            try {
-              canvas.width = video.videoWidth;
-              canvas.height = video.videoHeight;
-              ctx.drawImage(video, 0, 0);
-              const result = reader.decodeFromVideoElement(video);
-              if (result) { handleResult(result.getText()); return; }
-            } catch {}
-            if (!cancelled) rafRef.current = setTimeout(scan, 400);
-          };
-          scan();
-        }
-      } catch (e) {
-        if (!cancelled) {
+      } catch(e) {
+        if (activeRef.current) {
           setStatus("error");
-          setErrorMsg("Camera access denied. Please allow camera permissions in Settings.");
+          setErrorMsg("Could not access camera. Check Settings > Safari > Camera.");
         }
       }
     }
 
-    async function handleResult(barcode) {
-      if (cancelled) return;
+    function scheduleScan() {
+      timerRef.current = setTimeout(doScan, 500);
+    }
+
+    async function doScan() {
+      if (!activeRef.current) return;
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) {
+        scheduleScan(); return;
+      }
+      try {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext("2d").drawImage(video, 0, 0);
+
+        if ("BarcodeDetector" in window) {
+          const detector = new window.BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e","code_128","code_39","qr_code"] });
+          const results = await detector.detect(canvas);
+          if (results.length > 0 && activeRef.current) {
+            finish(results[0].rawValue); return;
+          }
+        }
+      } catch {}
+      if (activeRef.current) scheduleScan();
+    }
+
+    async function finish(barcode) {
+      if (!activeRef.current) return;
       setStatus("found");
       try {
         const food = await lookupBarcode(barcode);
-        if (!cancelled) setScannedFood(food);
+        if (activeRef.current) setScannedFood(food);
       } catch {
-        if (!cancelled) {
+        if (activeRef.current) {
           setStatus("error");
-          setErrorMsg("Product not found in database. Try searching manually.");
+          setErrorMsg("Product not found. Try searching manually.");
         }
       }
     }
 
-    startScanner();
+    start();
+
     return () => {
-      cancelled = true;
-      if (rafRef.current) clearTimeout(rafRef.current);
+      activeRef.current = false;
+      clearTimeout(timerRef.current);
       streamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, []);
@@ -409,7 +390,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
   if (status === "error") return (
     <div style={{ textAlign: "center", padding: "24px 0", color: "#e76f51", fontSize: 13 }}>
       <div style={{ fontSize: 32, marginBottom: 8 }}>📷</div>
-      {errorMsg}
+      <p>{errorMsg}</p>
     </div>
   );
 
@@ -418,7 +399,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
       <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14, marginBottom: 12 }}>
         <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a1a", marginBottom: 4 }}>{scannedFood.name}</div>
         <div style={{ fontSize: 12, color: "#aaa", marginBottom: 10 }}>{scannedFood.serving} · {scannedFood.calories} kcal</div>
-        <div style={{ display: "flex", gap: 10, fontSize: 12 }}>
+        <div style={{ display: "flex", gap: 10, fontSize: 12, flexWrap: "wrap" }}>
           <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{scannedFood.protein}P</span>
           <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{scannedFood.carbs}C</span>
           <span style={{ color: MACRO_COLORS.fat, fontWeight: 600 }}>{scannedFood.fat}F</span>
@@ -442,18 +423,21 @@ function BarcodeScanner({ onResult, onScanAgain }) {
   return (
     <div style={{ textAlign: "center" }}>
       <canvas ref={canvasRef} style={{ display: "none" }} />
-      <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#000", marginBottom: 10, aspectRatio: "4/3" }}>
-        <video ref={videoRef} autoPlay playsInline muted webkit-playsinline="true" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-          <div style={{ width: "65%", aspectRatio: "3/1", border: "2px solid rgba(255,255,255,0.8)", borderRadius: 8, boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }} />
-        </div>
+      <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, aspectRatio: "4/3" }}>
+        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        {status === "scanning" && (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+            <div style={{ width: "65%", aspectRatio: "3/1", border: "2.5px solid rgba(255,255,255,0.85)", borderRadius: 8, boxShadow: "0 0 0 9999px rgba(0,0,0,0.4)" }} />
+          </div>
+        )}
       </div>
       <p style={{ fontSize: 12, color: "#aaa" }}>
-        {status === "starting" ? "Starting camera…" : "Point at a barcode"}
+        {status === "starting" ? "Starting camera…" : "Hold barcode steady in the box"}
       </p>
     </div>
   );
 }
+
 
 function AddFoodPanel({ onAdd, customFoods }) {
   const [mode, setMode] = useState("search");
