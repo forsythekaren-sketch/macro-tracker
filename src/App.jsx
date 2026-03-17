@@ -295,76 +295,110 @@ async function lookupBarcode(barcode) {
 
 function BarcodeScanner({ onResult, onScanAgain }) {
   const videoRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
   const streamRef = React.useRef(null);
-  const readerRef = React.useRef(null);
-  const [status, setStatus] = useState("starting"); // starting | scanning | found | error
+  const rafRef = React.useRef(null);
+  const [status, setStatus] = useState("starting");
   const [errorMsg, setErrorMsg] = useState("");
   const [scannedFood, setScannedFood] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
+
     async function startScanner() {
       try {
-        const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
-        if (cancelled) return;
-
-        const hints = new Map();
-        hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-          BarcodeFormat.EAN_13, BarcodeFormat.EAN_8,
-          BarcodeFormat.UPC_A, BarcodeFormat.UPC_E,
-          BarcodeFormat.CODE_128, BarcodeFormat.CODE_39,
-        ]);
-        hints.set(DecodeHintType.TRY_HARDER, true);
-
-        const reader = new BrowserMultiFormatReader(hints);
-        readerRef.current = reader;
-
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+          video: { facingMode: { ideal: "environment" } }
         });
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
         streamRef.current = stream;
 
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
+        const video = videoRef.current;
+        if (!video) return;
+        video.srcObject = stream;
+        video.playsInline = true;
+        video.muted = true;
+        await video.play();
+
+        // Wait for video to have real dimensions
+        await new Promise(resolve => {
+          const check = () => {
+            if (video.videoWidth > 0) resolve();
+            else setTimeout(check, 100);
+          };
+          check();
+        });
+
+        if (cancelled) return;
         setStatus("scanning");
 
-        const decode = () => {
-          if (cancelled || !videoRef.current) return;
-          try {
-            const result = reader.decodeFromVideoElement(videoRef.current);
-            if (result) {
-              handleResult(result.getText());
-              return;
-            }
-          } catch {}
-          requestAnimationFrame(decode);
-        };
-        requestAnimationFrame(decode);
-
+        // Try native BarcodeDetector first (iOS 17+, Chrome Android)
+        if ("BarcodeDetector" in window) {
+          const detector = new window.BarcodeDetector({
+            formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
+          });
+          const scan = async () => {
+            if (cancelled) return;
+            try {
+              const barcodes = await detector.detect(video);
+              if (barcodes.length > 0) {
+                await handleResult(barcodes[0].rawValue);
+                return;
+              }
+            } catch {}
+            rafRef.current = requestAnimationFrame(scan);
+          };
+          rafRef.current = requestAnimationFrame(scan);
+        } else {
+          // Fallback: draw frames to canvas and use zxing
+          const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
+          if (cancelled) return;
+          const hints = new Map();
+          hints.set(DecodeHintType.TRY_HARDER, true);
+          const reader = new BrowserMultiFormatReader(hints);
+          const canvas = canvasRef.current;
+          const ctx = canvas.getContext("2d");
+          const scan = () => {
+            if (cancelled) return;
+            try {
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              ctx.drawImage(video, 0, 0);
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const result = reader.decodeFromImageData(imageData);
+              if (result) { handleResult(result.getText()); return; }
+            } catch {}
+            rafRef.current = requestAnimationFrame(scan);
+          };
+          rafRef.current = requestAnimationFrame(scan);
+        }
       } catch (e) {
-        if (!cancelled) { setStatus("error"); setErrorMsg("Camera access denied. Please allow camera permissions."); }
+        if (!cancelled) {
+          setStatus("error");
+          setErrorMsg("Camera access denied. Please allow camera permissions in Settings.");
+        }
       }
     }
 
     async function handleResult(barcode) {
+      if (cancelled) return;
       setStatus("found");
       try {
         const food = await lookupBarcode(barcode);
         if (!cancelled) setScannedFood(food);
       } catch {
-        setStatus("error");
-        setErrorMsg("Product not found in database. Try searching manually.");
+        if (!cancelled) {
+          setStatus("error");
+          setErrorMsg("Product not found in database. Try searching manually.");
+        }
       }
     }
 
     startScanner();
     return () => {
       cancelled = true;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
       streamRef.current?.getTracks().forEach(t => t.stop());
-      if (readerRef.current?.reset) readerRef.current.reset();
     };
   }, []);
 
@@ -403,8 +437,9 @@ function BarcodeScanner({ onResult, onScanAgain }) {
 
   return (
     <div style={{ textAlign: "center" }}>
+      <canvas ref={canvasRef} style={{ display: "none" }} />
       <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#000", marginBottom: 10, aspectRatio: "4/3" }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <video ref={videoRef} autoPlay playsInline muted webkit-playsinline="true" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
           <div style={{ width: "65%", aspectRatio: "3/1", border: "2px solid rgba(255,255,255,0.8)", borderRadius: 8, boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }} />
         </div>
@@ -760,3 +795,4 @@ function GoalsTab({ goals, onChange }) {
     </div>
   );
 }
+
