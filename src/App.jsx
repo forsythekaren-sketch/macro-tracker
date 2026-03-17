@@ -337,15 +337,20 @@ function BarcodeScanner({ onResult, onScanAgain }) {
           const detector = new window.BarcodeDetector({
             formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
           });
+          let scanning = false;
           const scan = async () => {
             if (cancelled) return;
-            try {
-              const barcodes = await detector.detect(video);
-              if (barcodes.length > 0) {
-                await handleResult(barcodes[0].rawValue);
-                return;
-              }
-            } catch {}
+            if (!scanning) {
+              scanning = true;
+              try {
+                const barcodes = await detector.detect(video);
+                if (barcodes.length > 0) {
+                  await handleResult(barcodes[0].rawValue);
+                  return;
+                }
+              } catch {}
+              scanning = false;
+            }
             rafRef.current = requestAnimationFrame(scan);
           };
           rafRef.current = requestAnimationFrame(scan);
