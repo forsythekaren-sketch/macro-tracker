@@ -342,38 +342,41 @@ function BarcodeScanner({ onResult, onScanAgain }) {
       timerRef.current = setTimeout(doScan, 500);
     }
 
+    let zxingReader = null;
+
+    async function loadZxing() {
+      if (zxingReader) return zxingReader;
+      const { BrowserMultiFormatReader, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
+      const hints = new Map();
+      hints.set(DecodeHintType.TRY_HARDER, true);
+      zxingReader = new BrowserMultiFormatReader(hints);
+      return zxingReader;
+    }
+
     async function doScan() {
       if (!activeRef.current) return;
       const video = videoRef.current;
-      if (!video || video.readyState < 2 || video.videoWidth === 0) {
+      const canvas = canvasRef.current;
+      if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) {
+        setDebug(`Waiting for video… readyState:${video?.readyState}`);
         scheduleScan(); return;
       }
       try {
-        if ("BarcodeDetector" in window) {
-          // Try directly on video element first (works better on some iOS versions)
-          const detector = new window.BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e","code_128","code_39","qr_code"] });
-          let results = [];
-          try {
-            results = await detector.detect(video);
-          } catch {
-            // fallback to canvas if video detection fails
-            const canvas = canvasRef.current;
-            if (canvas) {
-              canvas.width = video.videoWidth;
-              canvas.height = video.videoHeight;
-              canvas.getContext("2d").drawImage(video, 0, 0);
-              results = await detector.detect(canvas);
-            }
-          }
-          if (results.length > 0 && activeRef.current) {
-            finish(results[0].rawValue); return;
-          }
-          setDebug(`Scanning… ${video.videoWidth}x${video.videoHeight}`);
-        } else {
-          setDebug("BarcodeDetector not available");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(video, 0, 0);
+        setDebug(`Scanning ${video.videoWidth}x${video.videoHeight}…`);
+        const reader = await loadZxing();
+        const result = reader.decodeFromCanvas(canvas);
+        if (result && activeRef.current) {
+          finish(result.getText()); return;
         }
       } catch(e) {
-        setDebug("Error: " + e.message);
+        // NotFoundException is normal when no barcode in frame, ignore it
+        if (!e.message?.includes("No MultiFormat")) {
+          setDebug(`No barcode found (${video.videoWidth}x${video.videoHeight})`);
+        }
       }
       if (activeRef.current) scheduleScan();
     }
