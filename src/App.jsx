@@ -302,6 +302,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
   const [status, setStatus] = useState("starting");
   const [errorMsg, setErrorMsg] = useState("");
   const [scannedFood, setScannedFood] = useState(null);
+  const [debug, setDebug] = useState("");
 
   useEffect(() => {
     activeRef.current = true;
@@ -344,23 +345,36 @@ function BarcodeScanner({ onResult, onScanAgain }) {
     async function doScan() {
       if (!activeRef.current) return;
       const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) {
+      if (!video || video.readyState < 2 || video.videoWidth === 0) {
         scheduleScan(); return;
       }
       try {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        canvas.getContext("2d").drawImage(video, 0, 0);
-
         if ("BarcodeDetector" in window) {
+          // Try directly on video element first (works better on some iOS versions)
           const detector = new window.BarcodeDetector({ formats: ["ean_13","ean_8","upc_a","upc_e","code_128","code_39","qr_code"] });
-          const results = await detector.detect(canvas);
+          let results = [];
+          try {
+            results = await detector.detect(video);
+          } catch {
+            // fallback to canvas if video detection fails
+            const canvas = canvasRef.current;
+            if (canvas) {
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              canvas.getContext("2d").drawImage(video, 0, 0);
+              results = await detector.detect(canvas);
+            }
+          }
           if (results.length > 0 && activeRef.current) {
             finish(results[0].rawValue); return;
           }
+          setDebug(`Scanning… ${video.videoWidth}x${video.videoHeight}`);
+        } else {
+          setDebug("BarcodeDetector not available");
         }
-      } catch {}
+      } catch(e) {
+        setDebug("Error: " + e.message);
+      }
       if (activeRef.current) scheduleScan();
     }
 
@@ -434,6 +448,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
       <p style={{ fontSize: 12, color: "#aaa" }}>
         {status === "starting" ? "Starting camera…" : "Hold barcode steady in the box"}
       </p>
+      {debug && <p style={{ fontSize: 10, color: "#aaa", marginTop: 4, fontFamily: "monospace" }}>{debug}</p>}
     </div>
   );
 }
