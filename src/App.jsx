@@ -729,3 +729,4 @@ function GoalsTab({ goals, onChange }) {
     </div>
   );
 }
+
