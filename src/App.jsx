@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "firebase/firestore";
 
@@ -274,6 +274,118 @@ function TodayTab({ totals, goals, entries, onAdd, onRemove, customFoods }) {
   );
 }
 
+async function lookupBarcode(barcode) {
+  const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+  const data = await res.json();
+  if (data.status !== 1) throw new Error("Product not found");
+  const p = data.product;
+  const n = p.nutriments || {};
+  const servingG = parseFloat(p.serving_size) || 100;
+  return {
+    name: p.product_name || p.generic_name || "Unknown product",
+    serving: p.serving_size || "100g",
+    calories: Math.round(n["energy-kcal_serving"] || n["energy-kcal_100g"] || 0),
+    protein: Math.round(n["proteins_serving"] || n["proteins_100g"] || 0),
+    carbs: Math.round(n["carbohydrates_serving"] || n["carbohydrates_100g"] || 0),
+    fat: Math.round(n["fat_serving"] || n["fat_100g"] || 0),
+    fiber: Math.round(n["fiber_serving"] || n["fiber_100g"] || 0),
+    sugar: Math.round(n["sugars_serving"] || n["sugars_100g"] || 0),
+  };
+}
+
+function BarcodeScanner({ onResult }) {
+  const videoRef = React.useRef(null);
+  const streamRef = React.useRef(null);
+  const readerRef = React.useRef(null);
+  const [status, setStatus] = useState("starting"); // starting | scanning | found | error
+  const [errorMsg, setErrorMsg] = useState("");
+  const [scannedFood, setScannedFood] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function startScanner() {
+      try {
+        const { BrowserMultiFormatReader } = await import("https://esm.sh/@zxing/browser@0.1.5");
+        if (cancelled) return;
+        const reader = new BrowserMultiFormatReader();
+        readerRef.current = reader;
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) videoRef.current.srcObject = stream;
+        setStatus("scanning");
+        reader.decodeFromStream(stream, videoRef.current, async (result, err) => {
+          if (cancelled) return;
+          if (result) {
+            setStatus("found");
+            try {
+              const food = await lookupBarcode(result.getText());
+              if (!cancelled) setScannedFood(food);
+            } catch {
+              setStatus("error");
+              setErrorMsg("Product not found in database. Try searching manually.");
+            }
+          }
+        });
+      } catch (e) {
+        if (!cancelled) { setStatus("error"); setErrorMsg("Camera access denied. Please allow camera permissions."); }
+      }
+    }
+    startScanner();
+    return () => {
+      cancelled = true;
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, []);
+
+  if (status === "error") return (
+    <div style={{ textAlign: "center", padding: "24px 0", color: "#e76f51", fontSize: 13 }}>
+      <div style={{ fontSize: 32, marginBottom: 8 }}>📷</div>
+      {errorMsg}
+    </div>
+  );
+
+  if (scannedFood) return (
+    <div>
+      <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a1a", marginBottom: 4 }}>{scannedFood.name}</div>
+        <div style={{ fontSize: 12, color: "#aaa", marginBottom: 10 }}>{scannedFood.serving} · {scannedFood.calories} kcal</div>
+        <div style={{ display: "flex", gap: 10, fontSize: 12 }}>
+          <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{scannedFood.protein}P</span>
+          <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{scannedFood.carbs}C</span>
+          <span style={{ color: MACRO_COLORS.fat, fontWeight: 600 }}>{scannedFood.fat}F</span>
+          {scannedFood.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, fontWeight: 600 }}>{scannedFood.fiber}g fiber</span>}
+          {scannedFood.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar, fontWeight: 600 }}>{scannedFood.sugar}g sugar</span>}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={() => { setScannedFood(null); setStatus("scanning"); }}
+          style={{ flex: 1, padding: 11, borderRadius: 10, background: "#f5f2ee", color: "#1a1a1a", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
+          Scan Again
+        </button>
+        <button onClick={() => onResult(scannedFood)}
+          style={{ flex: 2, padding: 11, borderRadius: 10, background: "#1a1a1a", color: "#fff", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
+          Add to Log
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#000", marginBottom: 10, aspectRatio: "4/3" }}>
+        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+          <div style={{ width: "65%", aspectRatio: "3/1", border: "2px solid rgba(255,255,255,0.8)", borderRadius: 8, boxShadow: "0 0 0 9999px rgba(0,0,0,0.35)" }} />
+        </div>
+      </div>
+      <p style={{ fontSize: 12, color: "#aaa" }}>
+        {status === "starting" ? "Starting camera…" : "Point at a barcode"}
+      </p>
+    </div>
+  );
+}
+
 function AddFoodPanel({ onAdd, customFoods }) {
   const [mode, setMode] = useState("search");
   const [query, setQuery] = useState("");
@@ -292,7 +404,7 @@ function AddFoodPanel({ onAdd, customFoods }) {
   return (
     <div style={{ background: "#fff", border: "1px solid #ede9e2", borderRadius: 16, padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-        {[["search", "🔍 Search"], ["custom", "📦 My Foods"], ["manual", "✏️ Manual"]].map(([m, l]) => (
+        {[["search", "🔍 Search"], ["scan", "📷 Scan"], ["custom", "📦 My Foods"], ["manual", "✏️ Manual"]].map(([m, l]) => (
           <button key={m} onClick={() => setMode(m)}
             style={{ flex: 1, padding: "7px 4px", borderRadius: 8, fontSize: 11, fontWeight: mode === m ? 700 : 400, background: mode === m ? "#1a1a1a" : "#f5f2ee", color: mode === m ? "#fff" : "#666", fontFamily: "inherit", transition: "all 0.2s" }}>
             {l}
@@ -312,6 +424,7 @@ function AddFoodPanel({ onAdd, customFoods }) {
           {results.map((f, i) => <FoodResultRow key={i} food={f} onAdd={onAdd} />)}
         </div>
       )}
+      {mode === "scan" && <BarcodeScanner onResult={(food) => { onAdd(food); }} />}
       {mode === "custom" && (
         <div>
           {customFoods.length === 0
@@ -616,4 +729,3 @@ function GoalsTab({ goals, onChange }) {
     </div>
   );
 }
-
