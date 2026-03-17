@@ -332,50 +332,49 @@ function BarcodeScanner({ onResult, onScanAgain }) {
         if (cancelled) return;
         setStatus("scanning");
 
-        // Try native BarcodeDetector first (iOS 17+, Chrome Android)
+        // Draw video frames to canvas and detect from canvas
+        // This is more reliable on iOS than detecting directly from video element
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+
         if ("BarcodeDetector" in window) {
           const detector = new window.BarcodeDetector({
             formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39"]
           });
-          let scanning = false;
           const scan = async () => {
             if (cancelled) return;
-            if (!scanning) {
-              scanning = true;
-              try {
-                const barcodes = await detector.detect(video);
-                if (barcodes.length > 0) {
-                  await handleResult(barcodes[0].rawValue);
-                  return;
-                }
-              } catch {}
-              scanning = false;
-            }
-            rafRef.current = requestAnimationFrame(scan);
+            try {
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              const barcodes = await detector.detect(canvas);
+              if (barcodes.length > 0) {
+                await handleResult(barcodes[0].rawValue);
+                return;
+              }
+            } catch {}
+            if (!cancelled) rafRef.current = setTimeout(scan, 400);
           };
-          rafRef.current = requestAnimationFrame(scan);
+          scan();
         } else {
-          // Fallback: draw frames to canvas and use zxing
-          const { BrowserMultiFormatReader, BarcodeFormat, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
+          // Fallback: zxing on canvas
+          const { BrowserMultiFormatReader, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
           if (cancelled) return;
           const hints = new Map();
           hints.set(DecodeHintType.TRY_HARDER, true);
           const reader = new BrowserMultiFormatReader(hints);
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext("2d");
           const scan = () => {
             if (cancelled) return;
             try {
               canvas.width = video.videoWidth;
               canvas.height = video.videoHeight;
               ctx.drawImage(video, 0, 0);
-              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-              const result = reader.decodeFromImageData(imageData);
+              const result = reader.decodeFromVideoElement(video);
               if (result) { handleResult(result.getText()); return; }
             } catch {}
-            rafRef.current = requestAnimationFrame(scan);
+            if (!cancelled) rafRef.current = setTimeout(scan, 400);
           };
-          rafRef.current = requestAnimationFrame(scan);
+          scan();
         }
       } catch (e) {
         if (!cancelled) {
@@ -402,7 +401,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
     startScanner();
     return () => {
       cancelled = true;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (rafRef.current) clearTimeout(rafRef.current);
       streamRef.current?.getTracks().forEach(t => t.stop());
     };
   }, []);
