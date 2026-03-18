@@ -13,31 +13,6 @@ module.exports = async function handler(req, res) {
   if (!key) return res.status(500).json({ error: "GEMINI_API_KEY not set in environment" });
 
   try {
-    // Try fetching with a realistic browser user agent
-    const pageRes = await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-      }
-    });
-
-    const html = await pageRes.text();
-    const fetchStatus = pageRes.status;
-
-    // Strip scripts, styles, tags
-    const text = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 10000);
-
-    if (text.length < 200) {
-      return res.status(500).json({ error: "Page fetch returned too little content (status: " + fetchStatus + "). Site may be blocking requests." });
-    }
-
     const geminiRes = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + key,
       {
@@ -46,7 +21,7 @@ module.exports = async function handler(req, res) {
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: "You are a nutrition expert. Analyze this recipe text and estimate the total nutritional content for the ENTIRE recipe. Return ONLY raw JSON with no markdown or explanation, in exactly this format:\n{\"name\":\"Recipe name\",\"servings\":4,\"total\":{\"calories\":1200,\"protein\":80,\"carbs\":120,\"fat\":40,\"fiber\":15,\"sugar\":20}}\nAll values must be numbers. servings is your best estimate of how many the recipe makes.\n\nRecipe text:\n" + text
+              text: "You are a nutrition expert. I will give you a recipe URL. Using your knowledge of common recipes and ingredients, estimate the total nutritional content for the ENTIRE recipe at that URL. If you recognize the recipe from the URL or site name, use that. Otherwise make a reasonable estimate based on the recipe name in the URL.\n\nReturn ONLY raw JSON with no markdown or explanation, in exactly this format:\n{\"name\":\"Recipe name\",\"servings\":4,\"total\":{\"calories\":1200,\"protein\":80,\"carbs\":120,\"fat\":40,\"fiber\":15,\"sugar\":20}}\n\nAll values must be numbers. servings is your best estimate.\n\nRecipe URL: " + url
             }]
           }],
           generationConfig: { temperature: 0.1 }
