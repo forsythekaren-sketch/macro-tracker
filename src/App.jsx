@@ -325,7 +325,7 @@ function ScanConfirm({ food, onAdd, onScanAgain }) {
         <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10 }}>
           <label style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>Qty:</label>
           <input value={qty} onChange={e => setQty(e.target.value)} type="number" min="0.1" step="0.1"
-            style={{ width: 60, padding: "7px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 15, fontFamily: "inherit", background: "#fff", textAlign: "center" }} />
+            style={{ width: 60, padding: "7px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 15, fontFamily: "inherit", background: "#fff", textAlign: "center", color: "#1a1a1a" }} />
           <select value={unit} onChange={e => setUnit(e.target.value)}
             style={{ flex: 1, padding: "7px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
             <option value="serving">serving</option>
