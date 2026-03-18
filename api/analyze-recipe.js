@@ -1,4 +1,4 @@
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -12,8 +12,7 @@ export default async function handler(req, res) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return res.status(500).json({ error: "GEMINI_API_KEY not set in environment" });
 
-  // Show first/last 4 chars to confirm correct key without exposing it
-  const keyPreview = `${key.slice(0, 4)}...${key.slice(-4)} (length: ${key.length})`;
+  const keyPreview = key.slice(0, 4) + "..." + key.slice(-4) + " (length: " + key.length + ")";
 
   try {
     let text = "";
@@ -24,7 +23,7 @@ export default async function handler(req, res) {
       const html = await pageRes.text();
       text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
     } catch(e) {
-      return res.status(500).json({ error: `Failed to fetch recipe page: ${e.message}` });
+      return res.status(500).json({ error: "Failed to fetch recipe page: " + e.message });
     }
 
     if (!text.trim()) {
@@ -32,19 +31,14 @@ export default async function handler(req, res) {
     }
 
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + key,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `You are a nutrition expert. Analyze this recipe text and estimate the total nutritional content for the ENTIRE recipe. Return ONLY raw JSON with no markdown or explanation, in exactly this format:
-{"name":"Recipe name","servings":4,"total":{"calories":1200,"protein":80,"carbs":120,"fat":40,"fiber":15,"sugar":20}}
-All values must be numbers. servings is your best estimate of how many the recipe makes.
-
-Recipe text:
-${text}`
+              text: "You are a nutrition expert. Analyze this recipe text and estimate the total nutritional content for the ENTIRE recipe. Return ONLY raw JSON with no markdown or explanation, in exactly this format:\n{\"name\":\"Recipe name\",\"servings\":4,\"total\":{\"calories\":1200,\"protein\":80,\"carbs\":120,\"fat\":40,\"fiber\":15,\"sugar\":20}}\nAll values must be numbers. servings is your best estimate of how many the recipe makes.\n\nRecipe text:\n" + text
             }]
           }],
           generationConfig: { temperature: 0.1 }
@@ -54,19 +48,19 @@ ${text}`
 
     if (!geminiRes.ok) {
       const errText = await geminiRes.text();
-      return res.status(500).json({ error: `Gemini API error ${geminiRes.status} (key: ${keyPreview}): ${errText.slice(0, 200)}` });
+      return res.status(500).json({ error: "Gemini API error " + geminiRes.status + " (key: " + keyPreview + "): " + errText.slice(0, 200) });
     }
 
     const geminiData = await geminiRes.json();
-    const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    const responseText = geminiData.candidates && geminiData.candidates[0] && geminiData.candidates[0].content && geminiData.candidates[0].content.parts && geminiData.candidates[0].content.parts[0] && geminiData.candidates[0].content.parts[0].text || "";
 
     if (!responseText) {
-      return res.status(500).json({ error: `Empty Gemini response. Full response: ${JSON.stringify(geminiData).slice(0, 300)}` });
+      return res.status(500).json({ error: "Empty Gemini response: " + JSON.stringify(geminiData).slice(0, 300) });
     }
 
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return res.status(500).json({ error: `No JSON found in: ${responseText.slice(0, 200)}` });
+      return res.status(500).json({ error: "No JSON found in: " + responseText.slice(0, 200) });
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
