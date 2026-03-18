@@ -417,7 +417,17 @@ function BarcodeScanner({ onResult, onScanAgain }) {
 
   return (
     <div style={{ textAlign: "center" }}>
-      <div ref={mountRef} style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, aspectRatio: "4/3" }} />
+      <style>{`
+        #quagga-mount video, #quagga-mount canvas {
+          position: absolute !important;
+          top: 0 !important;
+          left: 0 !important;
+          width: 100% !important;
+          height: 100% !important;
+          object-fit: cover !important;
+        }
+      `}</style>
+      <div id="quagga-mount" ref={mountRef} style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, width: "100%", height: 240 }} />
       <p style={{ fontSize: 12, color: "#aaa" }}>
         {status === "starting" ? "Loading scanner…" : "Point at barcode"}
       </p>
