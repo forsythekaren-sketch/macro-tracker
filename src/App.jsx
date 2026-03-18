@@ -339,7 +339,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
     }
 
     function scheduleScan() {
-      timerRef.current = setTimeout(doScan, 500);
+      timerRef.current = setTimeout(doScan, 800);
     }
 
     let zxingReader = null;
@@ -358,25 +358,36 @@ function BarcodeScanner({ onResult, onScanAgain }) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) {
-        setDebug(`Waiting for video… readyState:${video?.readyState}`);
+        setDebug(`Waiting… readyState:${video?.readyState}`);
         scheduleScan(); return;
       }
       try {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        // Crop to center strip where the barcode box is
+        const cropW = Math.round(vw * 0.8);
+        const cropH = Math.round(vh * 0.4);
+        const cropX = Math.round((vw - cropW) / 2);
+        const cropY = Math.round((vh - cropH) / 2);
+        canvas.width = cropW;
+        canvas.height = cropH;
         const ctx = canvas.getContext("2d");
-        ctx.drawImage(video, 0, 0);
-        setDebug(`Scanning ${video.videoWidth}x${video.videoHeight}…`);
+        ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        setDebug(`Scanning ${cropW}x${cropH} crop…`);
         const reader = await loadZxing();
+        // Try cropped first
+        try {
+          const result = reader.decodeFromCanvas(canvas);
+          if (result && activeRef.current) { finish(result.getText()); return; }
+        } catch {}
+        // Also try full frame
+        canvas.width = vw;
+        canvas.height = vh;
+        ctx.drawImage(video, 0, 0);
         const result = reader.decodeFromCanvas(canvas);
-        if (result && activeRef.current) {
-          finish(result.getText()); return;
-        }
+        if (result && activeRef.current) { finish(result.getText()); return; }
       } catch(e) {
-        // NotFoundException is normal when no barcode in frame, ignore it
-        if (!e.message?.includes("No MultiFormat")) {
-          setDebug(`No barcode found (${video.videoWidth}x${video.videoHeight})`);
-        }
+        setDebug(`No barcode (${video.videoWidth}x${video.videoHeight})`);
       }
       if (activeRef.current) scheduleScan();
     }
