@@ -19,7 +19,10 @@ const USER_ID = "karen";
 const defaultGoals = { calories: 1650, protein: 100, carbs: 180, fat: 58, fiber: 30, sugar: 25 };
 
 function getDateKey(date = new Date()) {
-  return date.toISOString().split("T")[0];
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function getLast7Days() {
@@ -294,124 +297,83 @@ async function lookupBarcode(barcode) {
 }
 
 function BarcodeScanner({ onResult, onScanAgain }) {
-  const videoRef = React.useRef(null);
-  const canvasRef = React.useRef(null);
-  const streamRef = React.useRef(null);
-  const timerRef = React.useRef(null);
-  const activeRef = React.useRef(true);
+  const mountRef = React.useRef(null);
   const [status, setStatus] = useState("starting");
   const [errorMsg, setErrorMsg] = useState("");
   const [scannedFood, setScannedFood] = useState(null);
   const [debug, setDebug] = useState("");
 
   useEffect(() => {
-    activeRef.current = true;
+    let active = true;
+    let quagga = null;
 
     async function start() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+        const Q = await import("https://esm.sh/quagga@0.12.1");
+        quagga = Q.default || Q;
+        if (!active || !mountRef.current) return;
+
+        quagga.init({
+          inputStream: {
+            type: "LiveStream",
+            target: mountRef.current,
+            constraints: {
+              facingMode: "environment",
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+          },
+          locator: { patchSize: "medium", halfSample: true },
+          numOfWorkers: 0,
+          decoder: {
+            readers: ["ean_reader", "ean_8_reader", "upc_reader", "upc_e_reader", "code_128_reader"],
+          },
+          locate: true,
+        }, (err) => {
+          if (err) {
+            if (active) { setStatus("error"); setErrorMsg("Camera error: " + err); }
+            return;
+          }
+          if (!active) { quagga.stop(); return; }
+          quagga.start();
+          setStatus("scanning");
+          setDebug("Quagga running…");
         });
-        if (!activeRef.current) { stream.getTracks().forEach(t => t.stop()); return; }
-        streamRef.current = stream;
 
-        const video = videoRef.current;
-        if (!video) return;
-
-        await new Promise(resolve => {
-          video.onloadedmetadata = resolve;
-          video.srcObject = stream;
+        quagga.onDetected((result) => {
+          if (!active) return;
+          const code = result?.codeResult?.code;
+          if (code) {
+            quagga.stop();
+            handleResult(code);
+          }
         });
-        await video.play();
 
-        // Extra wait for iOS to fully initialize
-        await new Promise(r => setTimeout(r, 800));
-        if (!activeRef.current) return;
-        setStatus("scanning");
-        scheduleScan();
+        quagga.onProcessed((result) => {
+          if (result?.boxes) setDebug("Scanning…");
+        });
 
       } catch(e) {
-        if (activeRef.current) {
-          setStatus("error");
-          setErrorMsg("Could not access camera. Check Settings > Safari > Camera.");
-        }
+        if (active) { setStatus("error"); setErrorMsg("Failed to load scanner: " + e.message); }
       }
     }
 
-    function scheduleScan() {
-      timerRef.current = setTimeout(doScan, 800);
-    }
-
-    let zxingReader = null;
-
-    async function loadZxing() {
-      if (zxingReader) return zxingReader;
-      const { BrowserMultiFormatReader, DecodeHintType } = await import("https://esm.sh/@zxing/library@0.21.3");
-      const hints = new Map();
-      hints.set(DecodeHintType.TRY_HARDER, true);
-      zxingReader = new BrowserMultiFormatReader(hints);
-      return zxingReader;
-    }
-
-    async function doScan() {
-      if (!activeRef.current) return;
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      if (!video || !canvas || video.readyState < 2 || video.videoWidth === 0) {
-        setDebug(`Waiting… readyState:${video?.readyState}`);
-        scheduleScan(); return;
-      }
-      try {
-        const vw = video.videoWidth;
-        const vh = video.videoHeight;
-        // Crop to center strip where the barcode box is
-        const cropW = Math.round(vw * 0.8);
-        const cropH = Math.round(vh * 0.4);
-        const cropX = Math.round((vw - cropW) / 2);
-        const cropY = Math.round((vh - cropH) / 2);
-        canvas.width = cropW;
-        canvas.height = cropH;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-        setDebug(`Scanning ${cropW}x${cropH} crop…`);
-        const reader = await loadZxing();
-        // Try cropped first
-        try {
-          const result = reader.decodeFromCanvas(canvas);
-          if (result && activeRef.current) { finish(result.getText()); return; }
-        } catch {}
-        // Also try full frame
-        canvas.width = vw;
-        canvas.height = vh;
-        ctx.drawImage(video, 0, 0);
-        const result = reader.decodeFromCanvas(canvas);
-        if (result && activeRef.current) { finish(result.getText()); return; }
-      } catch(e) {
-        setDebug(`No barcode (${video.videoWidth}x${video.videoHeight})`);
-      }
-      if (activeRef.current) scheduleScan();
-    }
-
-    async function finish(barcode) {
-      if (!activeRef.current) return;
+    async function handleResult(barcode) {
       setStatus("found");
+      setDebug("");
       try {
         const food = await lookupBarcode(barcode);
-        if (activeRef.current) setScannedFood(food);
+        if (active) setScannedFood(food);
       } catch {
-        if (activeRef.current) {
-          setStatus("error");
-          setErrorMsg("Product not found. Try searching manually.");
-        }
+        if (active) { setStatus("error"); setErrorMsg("Product not found. Try searching manually."); }
       }
     }
 
     start();
 
     return () => {
-      activeRef.current = false;
-      clearTimeout(timerRef.current);
-      streamRef.current?.getTracks().forEach(t => t.stop());
+      active = false;
+      try { if (quagga) quagga.stop(); } catch {}
     };
   }, []);
 
@@ -450,17 +412,9 @@ function BarcodeScanner({ onResult, onScanAgain }) {
 
   return (
     <div style={{ textAlign: "center" }}>
-      <canvas ref={canvasRef} style={{ display: "none" }} />
-      <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, aspectRatio: "4/3" }}>
-        <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-        {status === "scanning" && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-            <div style={{ width: "65%", aspectRatio: "3/1", border: "2.5px solid rgba(255,255,255,0.85)", borderRadius: 8, boxShadow: "0 0 0 9999px rgba(0,0,0,0.4)" }} />
-          </div>
-        )}
-      </div>
+      <div ref={mountRef} style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, aspectRatio: "4/3" }} />
       <p style={{ fontSize: 12, color: "#aaa" }}>
-        {status === "starting" ? "Starting camera…" : "Hold barcode steady in the box"}
+        {status === "starting" ? "Loading scanner…" : "Point at barcode"}
       </p>
       {debug && <p style={{ fontSize: 10, color: "#aaa", marginTop: 4, fontFamily: "monospace" }}>{debug}</p>}
     </div>
