@@ -9,8 +9,13 @@ export default async function handler(req, res) {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "URL required" });
 
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return res.status(500).json({ error: "GEMINI_API_KEY not set in environment" });
+
+  // Show first/last 4 chars to confirm correct key without exposing it
+  const keyPreview = `${key.slice(0, 4)}...${key.slice(-4)} (length: ${key.length})`;
+
   try {
-    // Fetch the recipe page
     let text = "";
     try {
       const pageRes = await fetch(url, {
@@ -26,9 +31,8 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: "Recipe page was empty" });
     }
 
-    // Send to Gemini
     const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -50,12 +54,12 @@ ${text}`
 
     if (!geminiRes.ok) {
       const errText = await geminiRes.text();
-      return res.status(500).json({ error: `Gemini API error ${geminiRes.status}: ${errText.slice(0, 200)}` });
+      return res.status(500).json({ error: `Gemini API error ${geminiRes.status} (key: ${keyPreview}): ${errText.slice(0, 200)}` });
     }
 
     const geminiData = await geminiRes.json();
     const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    
+
     if (!responseText) {
       return res.status(500).json({ error: `Empty Gemini response. Full response: ${JSON.stringify(geminiData).slice(0, 300)}` });
     }
