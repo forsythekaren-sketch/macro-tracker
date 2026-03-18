@@ -11,11 +11,20 @@ export default async function handler(req, res) {
 
   try {
     // Fetch the recipe page
-    const pageRes = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; recipe-analyzer/1.0)" }
-    });
-    const html = await pageRes.text();
-    const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+    let text = "";
+    try {
+      const pageRes = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; recipe-analyzer/1.0)" }
+      });
+      const html = await pageRes.text();
+      text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+    } catch(e) {
+      return res.status(500).json({ error: `Failed to fetch recipe page: ${e.message}` });
+    }
+
+    if (!text.trim()) {
+      return res.status(500).json({ error: "Recipe page was empty" });
+    }
 
     // Send to Gemini
     const geminiRes = await fetch(
@@ -39,13 +48,26 @@ ${text}`
       }
     );
 
+    if (!geminiRes.ok) {
+      const errText = await geminiRes.text();
+      return res.status(500).json({ error: `Gemini API error ${geminiRes.status}: ${errText.slice(0, 200)}` });
+    }
+
     const geminiData = await geminiRes.json();
     const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
-    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("No JSON in response");
-    const parsed = JSON.parse(jsonMatch[0]);
+    
+    if (!responseText) {
+      return res.status(500).json({ error: `Empty Gemini response. Full response: ${JSON.stringify(geminiData).slice(0, 300)}` });
+    }
 
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      return res.status(500).json({ error: `No JSON found in: ${responseText.slice(0, 200)}` });
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
     res.status(200).json(parsed);
+
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
