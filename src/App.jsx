@@ -475,6 +475,154 @@ function BarcodeScanner({ onResult, onScanAgain }) {
 }
 
 
+function RecipeAnalyzer({ onAdd }) {
+  const [url, setUrl] = useState("");
+  const [status, setStatus] = useState("idle"); // idle | loading | done | error
+  const [recipe, setRecipe] = useState(null);
+  const [totalServings, setTotalServings] = useState("4");
+  const [myServings, setMyServings] = useState("1");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const analyze = async () => {
+    if (!url.trim()) return;
+    setStatus("loading");
+    setRecipe(null);
+    setErrorMsg("");
+    try {
+      // Fetch recipe page content
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const proxyRes = await fetch(proxyUrl);
+      const proxyData = await proxyRes.json();
+      const html = proxyData.contents || "";
+
+      // Strip HTML tags to get readable text
+      const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+
+      // Send to Claude API
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: `You are a nutrition expert. Given recipe text, extract the ingredients and estimate the total nutritional content for the ENTIRE recipe. Return ONLY a JSON object with no markdown, no explanation, just the JSON. Format:
+{
+  "name": "Recipe name",
+  "servings": 4,
+  "total": {
+    "calories": 1200,
+    "protein": 80,
+    "carbs": 120,
+    "fat": 40,
+    "fiber": 15,
+    "sugar": 20
+  }
+}
+All values should be numbers. servings is your best estimate of how many servings the recipe makes.`,
+          messages: [{ role: "user", content: `Extract nutrition info from this recipe:
+
+${text}` }]
+        })
+      });
+
+      const data = await response.json();
+      const text2 = data.content?.[0]?.text || "";
+      const clean = text2.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+
+      setRecipe(parsed);
+      setTotalServings(String(parsed.servings || 4));
+      setStatus("done");
+    } catch(e) {
+      setStatus("error");
+      setErrorMsg("Couldn't analyze that recipe. Try a different URL or use Manual entry.");
+    }
+  };
+
+  const perServing = recipe ? {
+    calories: Math.round(recipe.total.calories / (parseFloat(totalServings) || 1)),
+    protein: Math.round(recipe.total.protein / (parseFloat(totalServings) || 1)),
+    carbs: Math.round(recipe.total.carbs / (parseFloat(totalServings) || 1)),
+    fat: Math.round(recipe.total.fat / (parseFloat(totalServings) || 1)),
+    fiber: Math.round(recipe.total.fiber / (parseFloat(totalServings) || 1)),
+    sugar: Math.round(recipe.total.sugar / (parseFloat(totalServings) || 1)),
+  } : null;
+
+  const myPortion = perServing ? {
+    name: recipe.name,
+    serving: `${myServings} serving`,
+    calories: Math.round(perServing.calories * (parseFloat(myServings) || 1)),
+    protein: Math.round(perServing.protein * (parseFloat(myServings) || 1)),
+    carbs: Math.round(perServing.carbs * (parseFloat(myServings) || 1)),
+    fat: Math.round(perServing.fat * (parseFloat(myServings) || 1)),
+    fiber: Math.round(perServing.fiber * (parseFloat(myServings) || 1)),
+    sugar: Math.round(perServing.sugar * (parseFloat(myServings) || 1)),
+  } : null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste recipe URL…"
+          style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#faf8f5", color: "#1a1a1a" }} />
+        <button onClick={analyze} disabled={status === "loading" || !url.trim()}
+          style={{ padding: "10px 14px", borderRadius: 10, background: status === "loading" ? "#ccc" : "#1a1a1a", color: "#fff", fontSize: 13, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap" }}>
+          {status === "loading" ? "…" : "Analyze"}
+        </button>
+      </div>
+
+      {status === "loading" && (
+        <div style={{ textAlign: "center", padding: "20px 0", color: "#aaa", fontSize: 13 }}>
+          <div style={{ fontSize: 24, marginBottom: 6 }}>🍳</div>
+          Analyzing recipe…
+        </div>
+      )}
+
+      {status === "error" && (
+        <p style={{ color: "#e76f51", fontSize: 12 }}>{errorMsg}</p>
+      )}
+
+      {status === "done" && recipe && perServing && myPortion && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#1a1a1a", marginBottom: 10 }}>{recipe.name}</div>
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+              <label style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>Recipe makes:</label>
+              <input value={totalServings} onChange={e => setTotalServings(e.target.value)} type="number" min="1" step="1"
+                style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#fff", textAlign: "center", color: "#1a1a1a" }} />
+              <span style={{ fontSize: 12, color: "#666" }}>servings</span>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
+              <label style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>I'm having:</label>
+              <input value={myServings} onChange={e => setMyServings(e.target.value)} type="number" min="0.25" step="0.25"
+                style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#fff", textAlign: "center", color: "#1a1a1a" }} />
+              <span style={{ fontSize: 12, color: "#666" }}>servings</span>
+            </div>
+
+            <div style={{ borderTop: "1px solid #ede9e2", paddingTop: 10 }}>
+              <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Your portion</div>
+              <div style={{ display: "flex", gap: 8, fontSize: 13, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{myPortion.calories} kcal</span>
+                <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{myPortion.protein}P</span>
+                <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{myPortion.carbs}C</span>
+                <span style={{ color: MACRO_COLORS.fat, fontWeight: 600 }}>{myPortion.fat}F</span>
+                {myPortion.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, fontWeight: 600 }}>{myPortion.fiber}g fiber</span>}
+                {myPortion.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar, fontWeight: 600 }}>{myPortion.sugar}g sugar</span>}
+              </div>
+            </div>
+          </div>
+
+          <button onClick={() => onAdd(myPortion)}
+            style={{ width: "100%", padding: 12, borderRadius: 10, background: "#1a1a1a", color: "#fff", fontWeight: 600, fontSize: 14, fontFamily: "inherit" }}>
+            Add to Log
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AddFoodPanel({ onAdd, customFoods }) {
   const [mode, setMode] = useState("search");
   const [query, setQuery] = useState("");
@@ -494,7 +642,7 @@ function AddFoodPanel({ onAdd, customFoods }) {
   return (
     <div style={{ background: "#fff", border: "1px solid #ede9e2", borderRadius: 16, padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-        {[["search", "🔍 Search"], ["scan", "📷 Scan"], ["custom", "📦 My Foods"], ["manual", "✏️ Manual"]].map(([m, l]) => (
+        {[["search", "🔍 Search"], ["scan", "📷 Scan"], ["recipe", "🍳 Recipe"], ["custom", "📦 My Foods"], ["manual", "✏️ Manual"]].map(([m, l]) => (
           <button key={m} onClick={() => setMode(m)}
             style={{ flex: 1, padding: "7px 4px", borderRadius: 8, fontSize: 11, fontWeight: mode === m ? 700 : 400, background: mode === m ? "#1a1a1a" : "#f5f2ee", color: mode === m ? "#fff" : "#666", fontFamily: "inherit", transition: "all 0.2s" }}>
             {l}
@@ -523,6 +671,7 @@ function AddFoodPanel({ onAdd, customFoods }) {
         </div>
       )}
       {mode === "manual" && <ManualFoodForm onAdd={onAdd} />}
+      {mode === "recipe" && <RecipeAnalyzer onAdd={onAdd} />}
     </div>
   );
 }
