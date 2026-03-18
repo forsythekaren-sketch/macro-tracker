@@ -10,34 +10,37 @@ export default async function handler(req, res) {
   if (!url) return res.status(400).json({ error: "URL required" });
 
   try {
-    // First fetch the recipe page
+    // Fetch the recipe page
     const pageRes = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; recipe-analyzer/1.0)" }
     });
     const html = await pageRes.text();
-    // Strip tags and trim
     const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
 
-    // Send to Claude
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        system: `You are a nutrition expert. Given recipe text, extract the ingredients and estimate the total nutritional content for the ENTIRE recipe. Return ONLY raw JSON with no markdown or explanation. Format exactly:
+    // Send to Gemini
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `You are a nutrition expert. Analyze this recipe text and estimate the total nutritional content for the ENTIRE recipe. Return ONLY raw JSON with no markdown or explanation, in exactly this format:
 {"name":"Recipe name","servings":4,"total":{"calories":1200,"protein":80,"carbs":120,"fat":40,"fiber":15,"sugar":20}}
-All values must be numbers. servings is your best estimate of how many the recipe makes.`,
-        messages: [{ role: "user", content: `Analyze this recipe and return nutrition JSON:\n\n${text}` }]
-      })
-    });
+All values must be numbers. servings is your best estimate of how many the recipe makes.
 
-    const claudeData = await claudeRes.json();
-    const responseText = claudeData.content?.[0]?.text || "";
+Recipe text:
+${text}`
+            }]
+          }],
+          generationConfig: { temperature: 0.1 }
+        })
+      }
+    );
+
+    const geminiData = await geminiRes.json();
+    const responseText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "";
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON in response");
     const parsed = JSON.parse(jsonMatch[0]);
