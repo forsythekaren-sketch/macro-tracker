@@ -296,6 +296,65 @@ async function lookupBarcode(barcode) {
   };
 }
 
+function ScanConfirm({ food, onAdd, onScanAgain }) {
+  const [qty, setQty] = useState(1);
+  const [unit, setUnit] = useState("serving");
+
+  const multiplier = unit === "oz"
+    ? (parseFloat(qty) * 28.3495) / 100
+    : unit === "g"
+    ? parseFloat(qty) / 100
+    : parseFloat(qty) || 1;
+
+  const scaled = {
+    ...food,
+    serving: unit === "serving" ? `${qty} serving` : `${qty}${unit}`,
+    calories: Math.round(food.calories * multiplier),
+    protein: Math.round(food.protein * multiplier),
+    carbs: Math.round(food.carbs * multiplier),
+    fat: Math.round(food.fat * multiplier),
+    fiber: Math.round(food.fiber * multiplier),
+    sugar: Math.round(food.sugar * multiplier),
+  };
+
+  return (
+    <div>
+      <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a1a", marginBottom: 2 }}>{food.name}</div>
+        <div style={{ fontSize: 11, color: "#aaa", marginBottom: 10 }}>per {food.serving}</div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}>
+          <input value={qty} onChange={e => setQty(e.target.value)} type="number" min="0.1" step="0.1"
+            style={{ width: 64, padding: "8px 10px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 15, fontFamily: "inherit", background: "#fff", textAlign: "center" }} />
+          <select value={unit} onChange={e => setUnit(e.target.value)}
+            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+            <option value="serving">serving</option>
+            <option value="g">g</option>
+            <option value="oz">oz</option>
+          </select>
+        </div>
+        <div style={{ display: "flex", gap: 10, fontSize: 13, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{scaled.calories} kcal</span>
+          <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{scaled.protein}P</span>
+          <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{scaled.carbs}C</span>
+          <span style={{ color: MACRO_COLORS.fat, fontWeight: 600 }}>{scaled.fat}F</span>
+          {scaled.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, fontWeight: 600 }}>{scaled.fiber}g fiber</span>}
+          {scaled.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar, fontWeight: 600 }}>{scaled.sugar}g sugar</span>}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={onScanAgain}
+          style={{ flex: 1, padding: 11, borderRadius: 10, background: "#f5f2ee", color: "#1a1a1a", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
+          Scan Again
+        </button>
+        <button onClick={() => onAdd(scaled)}
+          style={{ flex: 2, padding: 11, borderRadius: 10, background: "#1a1a1a", color: "#fff", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
+          Add to Log
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function BarcodeScanner({ onResult, onScanAgain }) {
   const mountRef = React.useRef(null);
   const [status, setStatus] = useState("starting");
@@ -390,29 +449,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
   );
 
   if (scannedFood) return (
-    <div>
-      <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14, marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a1a", marginBottom: 4 }}>{scannedFood.name}</div>
-        <div style={{ fontSize: 12, color: "#aaa", marginBottom: 10 }}>{scannedFood.serving} · {scannedFood.calories} kcal</div>
-        <div style={{ display: "flex", gap: 10, fontSize: 12, flexWrap: "wrap" }}>
-          <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{scannedFood.protein}P</span>
-          <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{scannedFood.carbs}C</span>
-          <span style={{ color: MACRO_COLORS.fat, fontWeight: 600 }}>{scannedFood.fat}F</span>
-          {scannedFood.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, fontWeight: 600 }}>{scannedFood.fiber}g fiber</span>}
-          {scannedFood.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar, fontWeight: 600 }}>{scannedFood.sugar}g sugar</span>}
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={onScanAgain}
-          style={{ flex: 1, padding: 11, borderRadius: 10, background: "#f5f2ee", color: "#1a1a1a", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
-          Scan Again
-        </button>
-        <button onClick={() => onResult(scannedFood)}
-          style={{ flex: 2, padding: 11, borderRadius: 10, background: "#1a1a1a", color: "#fff", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
-          Add to Log
-        </button>
-      </div>
-    </div>
+    <ScanConfirm food={scannedFood} onAdd={onResult} onScanAgain={onScanAgain} />
   );
 
   return (
