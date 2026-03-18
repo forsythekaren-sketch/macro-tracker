@@ -340,10 +340,15 @@ function BarcodeScanner({ onResult, onScanAgain }) {
           setDebug("Quagga running…");
         });
 
+        // Require 3 consistent reads before confirming
+        const counts = {};
         quagga.onDetected((result) => {
           if (!active) return;
           const code = result?.codeResult?.code;
-          if (code) {
+          if (!code) return;
+          counts[code] = (counts[code] || 0) + 1;
+          setDebug(`Reading… (${counts[code]}/3)`);
+          if (counts[code] >= 3) {
             quagga.stop();
             handleResult(code);
           }
@@ -766,4 +771,3 @@ function GoalsTab({ goals, onChange }) {
     </div>
   );
 }
-
