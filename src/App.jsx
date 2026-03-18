@@ -297,7 +297,7 @@ async function lookupBarcode(barcode) {
 }
 
 function ScanConfirm({ food, onAdd, onScanAgain }) {
-  const [qty, setQty] = useState(1);
+  const [qty, setQty] = useState("1");
   const [unit, setUnit] = useState("serving");
 
   const multiplier = unit === "oz"
@@ -318,21 +318,22 @@ function ScanConfirm({ food, onAdd, onScanAgain }) {
   };
 
   return (
-    <div>
-      <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14, marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, fontSize: 15, color: "#1a1a1a", marginBottom: 2 }}>{food.name}</div>
-        <div style={{ fontSize: 11, color: "#aaa", marginBottom: 10 }}>per {food.serving}</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, color: "#1a1a1a", marginBottom: 2 }}>{food.name}</div>
+        <div style={{ fontSize: 11, color: "#aaa", marginBottom: 10 }}>1 serving = {food.serving}</div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>Qty:</label>
           <input value={qty} onChange={e => setQty(e.target.value)} type="number" min="0.1" step="0.1"
-            style={{ width: 64, padding: "8px 10px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 15, fontFamily: "inherit", background: "#fff", textAlign: "center" }} />
+            style={{ width: 60, padding: "7px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 15, fontFamily: "inherit", background: "#fff", textAlign: "center" }} />
           <select value={unit} onChange={e => setUnit(e.target.value)}
-            style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
+            style={{ flex: 1, padding: "7px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
             <option value="serving">serving</option>
             <option value="g">g</option>
             <option value="oz">oz</option>
           </select>
         </div>
-        <div style={{ display: "flex", gap: 10, fontSize: 13, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, fontSize: 13, flexWrap: "wrap" }}>
           <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{scaled.calories} kcal</span>
           <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{scaled.protein}P</span>
           <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{scaled.carbs}C</span>
@@ -464,7 +465,7 @@ function BarcodeScanner({ onResult, onScanAgain }) {
           object-fit: cover !important;
         }
       `}</style>
-      <div id="quagga-mount" ref={mountRef} style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, width: "100%", height: 240 }} />
+      <div id="quagga-mount" ref={mountRef} style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, width: "100%", height: 220 }} />
       <p style={{ fontSize: 12, color: "#aaa" }}>
         {status === "starting" ? "Loading scanner…" : "Point at barcode"}
       </p>
