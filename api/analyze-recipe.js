@@ -12,22 +12,30 @@ module.exports = async function handler(req, res) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return res.status(500).json({ error: "GEMINI_API_KEY not set in environment" });
 
-  const keyPreview = key.slice(0, 4) + "..." + key.slice(-4) + " (length: " + key.length + ")";
-
   try {
-    let text = "";
-    try {
-      const pageRes = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; recipe-analyzer/1.0)" }
-      });
-      const html = await pageRes.text();
-      text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
-    } catch(e) {
-      return res.status(500).json({ error: "Failed to fetch recipe page: " + e.message });
-    }
+    // Try fetching with a realistic browser user agent
+    const pageRes = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+      }
+    });
 
-    if (!text.trim()) {
-      return res.status(500).json({ error: "Recipe page was empty" });
+    const html = await pageRes.text();
+    const fetchStatus = pageRes.status;
+
+    // Strip scripts, styles, tags
+    const text = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 10000);
+
+    if (text.length < 200) {
+      return res.status(500).json({ error: "Page fetch returned too little content (status: " + fetchStatus + "). Site may be blocking requests." });
     }
 
     const geminiRes = await fetch(
@@ -48,11 +56,11 @@ module.exports = async function handler(req, res) {
 
     if (!geminiRes.ok) {
       const errText = await geminiRes.text();
-      return res.status(500).json({ error: "Gemini API error " + geminiRes.status + " (key: " + keyPreview + "): " + errText.slice(0, 200) });
+      return res.status(500).json({ error: "Gemini error " + geminiRes.status + ": " + errText.slice(0, 200) });
     }
 
     const geminiData = await geminiRes.json();
-    const responseText = geminiData.candidates && geminiData.candidates[0] && geminiData.candidates[0].content && geminiData.candidates[0].content.parts && geminiData.candidates[0].content.parts[0] && geminiData.candidates[0].content.parts[0].text || "";
+    const responseText = (geminiData.candidates || [])[0]?.content?.parts?.[0]?.text || "";
 
     if (!responseText) {
       return res.status(500).json({ error: "Empty Gemini response: " + JSON.stringify(geminiData).slice(0, 300) });
@@ -60,7 +68,7 @@ module.exports = async function handler(req, res) {
 
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      return res.status(500).json({ error: "No JSON found in: " + responseText.slice(0, 200) });
+      return res.status(500).json({ error: "No JSON in response: " + responseText.slice(0, 200) });
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
