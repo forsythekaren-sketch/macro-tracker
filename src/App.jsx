@@ -489,14 +489,33 @@ function RecipeAnalyzer({ onAdd }) {
     setRecipe(null);
     setErrorMsg("");
     try {
-      // Fetch recipe page content
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-      const proxyRes = await fetch(proxyUrl);
-      const proxyData = await proxyRes.json();
-      const html = proxyData.contents || "";
+      // Try multiple CORS proxies in order
+      let pageText = "";
+      const proxies = [
+        `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+        `https://corsproxy.io/?${encodeURIComponent(url)}`,
+      ];
+      for (const proxy of proxies) {
+        try {
+          const res = await fetch(proxy);
+          if (!res.ok) continue;
+          const data = await res.json();
+          const html = data.contents || data.body || "";
+          if (html.length > 500) {
+            // Strip tags, collapse whitespace, grab a big chunk
+            pageText = html
+              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/\s+/g, " ")
+              .trim()
+              .slice(0, 12000);
+            break;
+          }
+        } catch {}
+      }
 
-      // Strip HTML tags to get readable text
-      const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 8000);
+      if (!pageText) throw new Error("Could not fetch page");
 
       // Send to Claude API
       const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -505,37 +524,28 @@ function RecipeAnalyzer({ onAdd }) {
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
-          system: `You are a nutrition expert. Given recipe text, extract the ingredients and estimate the total nutritional content for the ENTIRE recipe. Return ONLY a JSON object with no markdown, no explanation, just the JSON. Format:
-{
-  "name": "Recipe name",
-  "servings": 4,
-  "total": {
-    "calories": 1200,
-    "protein": 80,
-    "carbs": 120,
-    "fat": 40,
-    "fiber": 15,
-    "sugar": 20
-  }
-}
-All values should be numbers. servings is your best estimate of how many servings the recipe makes.`,
-          messages: [{ role: "user", content: `Extract nutrition info from this recipe:
+          system: `You are a nutrition expert. Given recipe page text, find the ingredients list and estimate total nutritional content for the ENTIRE recipe. Return ONLY raw JSON, no markdown, no explanation. Format:
+{"name":"Recipe name","servings":4,"total":{"calories":1200,"protein":80,"carbs":120,"fat":40,"fiber":15,"sugar":20}}
+All values must be numbers. servings is your best estimate of how many the recipe makes based on the recipe card.`,
+          messages: [{ role: "user", content: `Find the recipe ingredients and calculate total nutrition:
 
-${text}` }]
+${pageText}` }]
         })
       });
 
       const data = await response.json();
-      const text2 = data.content?.[0]?.text || "";
-      const clean = text2.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
+      const text = data.content?.[0]?.text || "";
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("No JSON in response");
+      const parsed = JSON.parse(jsonMatch[0]);
 
+      if (!parsed.name || !parsed.total) throw new Error("Invalid recipe data");
       setRecipe(parsed);
       setTotalServings(String(parsed.servings || 4));
       setStatus("done");
     } catch(e) {
       setStatus("error");
-      setErrorMsg("Couldn't analyze that recipe. Try a different URL or use Manual entry.");
+      setErrorMsg("Couldn't fetch that recipe. Try copying the ingredients and using Manual entry instead.");
     }
   };
 
@@ -569,6 +579,7 @@ ${text}` }]
           {status === "loading" ? "…" : "Analyze"}
         </button>
       </div>
+      <p style={{ fontSize: 11, color: "#aaa", marginTop: -4 }}>Paste a URL from any recipe website</p>
 
       {status === "loading" && (
         <div style={{ textAlign: "center", padding: "20px 0", color: "#aaa", fontSize: 13 }}>
