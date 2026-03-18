@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, getDoc, collection, getDocs } from "firebase/firestore";
 
@@ -19,10 +19,7 @@ const USER_ID = "karen";
 const defaultGoals = { calories: 1650, protein: 100, carbs: 180, fat: 58, fiber: 30, sugar: 25 };
 
 function getDateKey(date = new Date()) {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
+  return date.toISOString().split("T")[0];
 }
 
 function getLast7Days() {
@@ -277,370 +274,12 @@ function TodayTab({ totals, goals, entries, onAdd, onRemove, customFoods }) {
   );
 }
 
-async function lookupBarcode(barcode) {
-  const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
-  const data = await res.json();
-  if (data.status !== 1) throw new Error("Product not found");
-  const p = data.product;
-  const n = p.nutriments || {};
-  const servingG = parseFloat(p.serving_size) || 100;
-  return {
-    name: p.product_name || p.generic_name || "Unknown product",
-    serving: p.serving_size || "100g",
-    calories: Math.round(n["energy-kcal_serving"] || n["energy-kcal_100g"] || 0),
-    protein: Math.round(n["proteins_serving"] || n["proteins_100g"] || 0),
-    carbs: Math.round(n["carbohydrates_serving"] || n["carbohydrates_100g"] || 0),
-    fat: Math.round(n["fat_serving"] || n["fat_100g"] || 0),
-    fiber: Math.round(n["fiber_serving"] || n["fiber_100g"] || 0),
-    sugar: Math.round(n["sugars_serving"] || n["sugars_100g"] || 0),
-  };
-}
-
-function ScanConfirm({ food, onAdd, onScanAgain }) {
-  const [qty, setQty] = useState("1");
-  const [unit, setUnit] = useState("serving");
-
-  const multiplier = unit === "oz"
-    ? (parseFloat(qty) * 28.3495) / 100
-    : unit === "g"
-    ? parseFloat(qty) / 100
-    : parseFloat(qty) || 1;
-
-  const scaled = {
-    ...food,
-    serving: unit === "serving" ? `${qty} serving` : `${qty}${unit}`,
-    calories: Math.round(food.calories * multiplier),
-    protein: Math.round(food.protein * multiplier),
-    carbs: Math.round(food.carbs * multiplier),
-    fat: Math.round(food.fat * multiplier),
-    fiber: Math.round(food.fiber * multiplier),
-    sugar: Math.round(food.sugar * multiplier),
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14 }}>
-        <div style={{ fontWeight: 700, fontSize: 14, color: "#1a1a1a", marginBottom: 2 }}>{food.name}</div>
-        <div style={{ fontSize: 11, color: "#aaa", marginBottom: 10 }}>1 serving = {food.serving}</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10 }}>
-          <label style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>Qty:</label>
-          <input value={qty} onChange={e => setQty(e.target.value)} type="number" min="0.1" step="0.1"
-            style={{ width: 60, padding: "7px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 15, fontFamily: "inherit", background: "#fff", textAlign: "center", color: "#1a1a1a" }} />
-          <select value={unit} onChange={e => setUnit(e.target.value)}
-            style={{ flex: 1, padding: "7px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#fff" }}>
-            <option value="serving">serving</option>
-            <option value="g">g</option>
-            <option value="oz">oz</option>
-          </select>
-        </div>
-        <div style={{ display: "flex", gap: 8, fontSize: 13, flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{scaled.calories} kcal</span>
-          <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{scaled.protein}P</span>
-          <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{scaled.carbs}C</span>
-          <span style={{ color: MACRO_COLORS.fat, fontWeight: 600 }}>{scaled.fat}F</span>
-          {scaled.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, fontWeight: 600 }}>{scaled.fiber}g fiber</span>}
-          {scaled.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar, fontWeight: 600 }}>{scaled.sugar}g sugar</span>}
-        </div>
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={onScanAgain}
-          style={{ flex: 1, padding: 11, borderRadius: 10, background: "#f5f2ee", color: "#1a1a1a", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
-          Scan Again
-        </button>
-        <button onClick={() => onAdd(scaled)}
-          style={{ flex: 2, padding: 11, borderRadius: 10, background: "#1a1a1a", color: "#fff", fontWeight: 600, fontSize: 13, fontFamily: "inherit" }}>
-          Add to Log
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function BarcodeScanner({ onResult, onScanAgain }) {
-  const mountRef = React.useRef(null);
-  const [status, setStatus] = useState("starting");
-  const [errorMsg, setErrorMsg] = useState("");
-  const [scannedFood, setScannedFood] = useState(null);
-  const [debug, setDebug] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    let quagga = null;
-
-    async function start() {
-      try {
-        const Q = await import("https://esm.sh/quagga@0.12.1");
-        quagga = Q.default || Q;
-        if (!active || !mountRef.current) return;
-
-        quagga.init({
-          inputStream: {
-            type: "LiveStream",
-            target: mountRef.current,
-            constraints: {
-              facingMode: "environment",
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-          },
-          locator: { patchSize: "medium", halfSample: true },
-          numOfWorkers: 0,
-          decoder: {
-            readers: ["ean_reader", "ean_8_reader", "upc_reader", "upc_e_reader", "code_128_reader"],
-          },
-          locate: true,
-        }, (err) => {
-          if (err) {
-            if (active) { setStatus("error"); setErrorMsg("Camera error: " + err); }
-            return;
-          }
-          if (!active) { quagga.stop(); return; }
-          quagga.start();
-          setStatus("scanning");
-          setDebug("Quagga running…");
-        });
-
-        // Require 3 consistent reads before confirming
-        const counts = {};
-        quagga.onDetected((result) => {
-          if (!active) return;
-          const code = result?.codeResult?.code;
-          if (!code) return;
-          counts[code] = (counts[code] || 0) + 1;
-          setDebug(`Reading… (${counts[code]}/3)`);
-          if (counts[code] >= 3) {
-            quagga.stop();
-            handleResult(code);
-          }
-        });
-
-        quagga.onProcessed((result) => {
-          if (result?.boxes) setDebug("Scanning…");
-        });
-
-      } catch(e) {
-        if (active) { setStatus("error"); setErrorMsg("Failed to load scanner: " + e.message); }
-      }
-    }
-
-    async function handleResult(barcode) {
-      setStatus("found");
-      setDebug("");
-      try {
-        const food = await lookupBarcode(barcode);
-        if (active) setScannedFood(food);
-      } catch {
-        if (active) { setStatus("error"); setErrorMsg("Product not found. Try searching manually."); }
-      }
-    }
-
-    start();
-
-    return () => {
-      active = false;
-      try { if (quagga) quagga.stop(); } catch {}
-    };
-  }, []);
-
-  if (status === "error") return (
-    <div style={{ textAlign: "center", padding: "24px 0", color: "#e76f51", fontSize: 13 }}>
-      <div style={{ fontSize: 32, marginBottom: 8 }}>📷</div>
-      <p>{errorMsg}</p>
-    </div>
-  );
-
-  if (scannedFood) return (
-    <ScanConfirm food={scannedFood} onAdd={onResult} onScanAgain={onScanAgain} />
-  );
-
-  return (
-    <div style={{ textAlign: "center" }}>
-      <style>{`
-        #quagga-mount video, #quagga-mount canvas {
-          position: absolute !important;
-          top: 0 !important;
-          left: 0 !important;
-          width: 100% !important;
-          height: 100% !important;
-          object-fit: cover !important;
-        }
-      `}</style>
-      <div id="quagga-mount" ref={mountRef} style={{ position: "relative", borderRadius: 12, overflow: "hidden", background: "#1a1a1a", marginBottom: 10, width: "100%", height: 220 }} />
-      <p style={{ fontSize: 12, color: "#aaa" }}>
-        {status === "starting" ? "Loading scanner…" : "Point at barcode"}
-      </p>
-      {debug && <p style={{ fontSize: 10, color: "#aaa", marginTop: 4, fontFamily: "monospace" }}>{debug}</p>}
-    </div>
-  );
-}
-
-
-function RecipeAnalyzer({ onAdd }) {
-  const [url, setUrl] = useState("");
-  const [status, setStatus] = useState("idle"); // idle | loading | done | error
-  const [recipe, setRecipe] = useState(null);
-  const [totalServings, setTotalServings] = useState("4");
-  const [myServings, setMyServings] = useState("1");
-  const [errorMsg, setErrorMsg] = useState("");
-
-  const analyze = async () => {
-    if (!url.trim()) return;
-    setStatus("loading");
-    setRecipe(null);
-    setErrorMsg("");
-    try {
-      // Try multiple CORS proxies in order
-      let pageText = "";
-      const proxies = [
-        `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-        `https://corsproxy.io/?${encodeURIComponent(url)}`,
-      ];
-      for (const proxy of proxies) {
-        try {
-          const res = await fetch(proxy);
-          if (!res.ok) continue;
-          const data = await res.json();
-          const html = data.contents || data.body || "";
-          if (html.length > 500) {
-            // Strip tags, collapse whitespace, grab a big chunk
-            pageText = html
-              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-              .replace(/<[^>]+>/g, " ")
-              .replace(/\s+/g, " ")
-              .trim()
-              .slice(0, 12000);
-            break;
-          }
-        } catch {}
-      }
-
-      if (!pageText) throw new Error("Could not fetch page");
-
-      // Send to Claude API
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: `You are a nutrition expert. Given recipe page text, find the ingredients list and estimate total nutritional content for the ENTIRE recipe. Return ONLY raw JSON, no markdown, no explanation. Format:
-{"name":"Recipe name","servings":4,"total":{"calories":1200,"protein":80,"carbs":120,"fat":40,"fiber":15,"sugar":20}}
-All values must be numbers. servings is your best estimate of how many the recipe makes based on the recipe card.`,
-          messages: [{ role: "user", content: `Find the recipe ingredients and calculate total nutrition:
-
-${pageText}` }]
-        })
-      });
-
-      const data = await response.json();
-      const text = data.content?.[0]?.text || "";
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("No JSON in response");
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      if (!parsed.name || !parsed.total) throw new Error("Invalid recipe data");
-      setRecipe(parsed);
-      setTotalServings(String(parsed.servings || 4));
-      setStatus("done");
-    } catch(e) {
-      setStatus("error");
-      setErrorMsg("Couldn't fetch that recipe. Try copying the ingredients and using Manual entry instead.");
-    }
-  };
-
-  const perServing = recipe ? {
-    calories: Math.round(recipe.total.calories / (parseFloat(totalServings) || 1)),
-    protein: Math.round(recipe.total.protein / (parseFloat(totalServings) || 1)),
-    carbs: Math.round(recipe.total.carbs / (parseFloat(totalServings) || 1)),
-    fat: Math.round(recipe.total.fat / (parseFloat(totalServings) || 1)),
-    fiber: Math.round(recipe.total.fiber / (parseFloat(totalServings) || 1)),
-    sugar: Math.round(recipe.total.sugar / (parseFloat(totalServings) || 1)),
-  } : null;
-
-  const myPortion = perServing ? {
-    name: recipe.name,
-    serving: `${myServings} serving`,
-    calories: Math.round(perServing.calories * (parseFloat(myServings) || 1)),
-    protein: Math.round(perServing.protein * (parseFloat(myServings) || 1)),
-    carbs: Math.round(perServing.carbs * (parseFloat(myServings) || 1)),
-    fat: Math.round(perServing.fat * (parseFloat(myServings) || 1)),
-    fiber: Math.round(perServing.fiber * (parseFloat(myServings) || 1)),
-    sugar: Math.round(perServing.sugar * (parseFloat(myServings) || 1)),
-  } : null;
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ display: "flex", gap: 8 }}>
-        <input value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste recipe URL…"
-          style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: "1px solid #ede9e2", fontSize: 13, fontFamily: "inherit", background: "#faf8f5", color: "#1a1a1a" }} />
-        <button onClick={analyze} disabled={status === "loading" || !url.trim()}
-          style={{ padding: "10px 14px", borderRadius: 10, background: status === "loading" ? "#ccc" : "#1a1a1a", color: "#fff", fontSize: 13, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap" }}>
-          {status === "loading" ? "…" : "Analyze"}
-        </button>
-      </div>
-      <p style={{ fontSize: 11, color: "#aaa", marginTop: -4 }}>Paste a URL from any recipe website</p>
-
-      {status === "loading" && (
-        <div style={{ textAlign: "center", padding: "20px 0", color: "#aaa", fontSize: 13 }}>
-          <div style={{ fontSize: 24, marginBottom: 6 }}>🍳</div>
-          Analyzing recipe…
-        </div>
-      )}
-
-      {status === "error" && (
-        <p style={{ color: "#e76f51", fontSize: 12 }}>{errorMsg}</p>
-      )}
-
-      {status === "done" && recipe && perServing && myPortion && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ background: "#faf8f5", borderRadius: 12, padding: 14 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: "#1a1a1a", marginBottom: 10 }}>{recipe.name}</div>
-
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
-              <label style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>Recipe makes:</label>
-              <input value={totalServings} onChange={e => setTotalServings(e.target.value)} type="number" min="1" step="1"
-                style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#fff", textAlign: "center", color: "#1a1a1a" }} />
-              <span style={{ fontSize: 12, color: "#666" }}>servings</span>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-              <label style={{ fontSize: 12, color: "#666", whiteSpace: "nowrap" }}>I'm having:</label>
-              <input value={myServings} onChange={e => setMyServings(e.target.value)} type="number" min="0.25" step="0.25"
-                style={{ width: 52, padding: "6px 8px", borderRadius: 8, border: "1px solid #ede9e2", fontSize: 14, fontFamily: "inherit", background: "#fff", textAlign: "center", color: "#1a1a1a" }} />
-              <span style={{ fontSize: 12, color: "#666" }}>servings</span>
-            </div>
-
-            <div style={{ borderTop: "1px solid #ede9e2", paddingTop: 10 }}>
-              <div style={{ fontSize: 11, color: "#aaa", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Your portion</div>
-              <div style={{ display: "flex", gap: 8, fontSize: 13, flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{myPortion.calories} kcal</span>
-                <span style={{ color: MACRO_COLORS.protein, fontWeight: 600 }}>{myPortion.protein}P</span>
-                <span style={{ color: MACRO_COLORS.carbs, fontWeight: 600 }}>{myPortion.carbs}C</span>
-                <span style={{ color: MACRO_COLORS.fat, fontWeight: 600 }}>{myPortion.fat}F</span>
-                {myPortion.fiber > 0 && <span style={{ color: MACRO_COLORS.fiber, fontWeight: 600 }}>{myPortion.fiber}g fiber</span>}
-                {myPortion.sugar > 0 && <span style={{ color: MACRO_COLORS.sugar, fontWeight: 600 }}>{myPortion.sugar}g sugar</span>}
-              </div>
-            </div>
-          </div>
-
-          <button onClick={() => onAdd(myPortion)}
-            style={{ width: "100%", padding: 12, borderRadius: 10, background: "#1a1a1a", color: "#fff", fontWeight: 600, fontSize: 14, fontFamily: "inherit" }}>
-            Add to Log
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function AddFoodPanel({ onAdd, customFoods }) {
   const [mode, setMode] = useState("search");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [scanKey, setScanKey] = useState(0);
 
   const doSearch = async () => {
     if (!query.trim()) return;
@@ -653,7 +292,7 @@ function AddFoodPanel({ onAdd, customFoods }) {
   return (
     <div style={{ background: "#fff", border: "1px solid #ede9e2", borderRadius: 16, padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-        {[["search", "🔍 Search"], ["scan", "📷 Scan"], ["recipe", "🍳 Recipe"], ["custom", "📦 My Foods"], ["manual", "✏️ Manual"]].map(([m, l]) => (
+        {[["search", "🔍 Search"], ["custom", "📦 My Foods"], ["manual", "✏️ Manual"]].map(([m, l]) => (
           <button key={m} onClick={() => setMode(m)}
             style={{ flex: 1, padding: "7px 4px", borderRadius: 8, fontSize: 11, fontWeight: mode === m ? 700 : 400, background: mode === m ? "#1a1a1a" : "#f5f2ee", color: mode === m ? "#fff" : "#666", fontFamily: "inherit", transition: "all 0.2s" }}>
             {l}
@@ -673,7 +312,6 @@ function AddFoodPanel({ onAdd, customFoods }) {
           {results.map((f, i) => <FoodResultRow key={i} food={f} onAdd={onAdd} />)}
         </div>
       )}
-      {mode === "scan" && <BarcodeScanner key={scanKey} onResult={(food) => { onAdd(food); }} onScanAgain={() => setScanKey(k => k + 1)} />}
       {mode === "custom" && (
         <div>
           {customFoods.length === 0
@@ -682,7 +320,6 @@ function AddFoodPanel({ onAdd, customFoods }) {
         </div>
       )}
       {mode === "manual" && <ManualFoodForm onAdd={onAdd} />}
-      {mode === "recipe" && <RecipeAnalyzer onAdd={onAdd} />}
     </div>
   );
 }
